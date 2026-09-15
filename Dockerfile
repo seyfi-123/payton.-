@@ -17,7 +17,7 @@ COPY 3_requirements.txt /app/3_requirements.txt
 RUN pip install --upgrade pip && \
     pip install -r /app/3_requirements.txt
 
-COPY 2credit_engine.py /app/credit_engine.py
+COPY 2credet_engine.ру /app/credit_engine.py
 
 RUN useradd -m -u 1000 -s /bin/bash appuser && \
     mkdir -p /app/certs /app/logs && \
