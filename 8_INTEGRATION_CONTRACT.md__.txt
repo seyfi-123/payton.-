@@ -1,0 +1,279 @@
+# INTEGRATION CONTRACT — Tajik Fintech Credit Engine v3.8.1
+
+API contract for integrating with bank systems: ABS, CIB, Face ID, Payment Gateway, SMS Gateway.
+
+---
+
+## 1. Common requirements
+
+All bank services MUST provide:
+
+- Transport: **HTTPS + mTLS** (client cert + bank CA)
+- Auth: **Bearer token** in `Authorization` header
+- Content-Type: `application/json; charset=utf-8`
+- Idempotency: `X-Idempotency-Key` header (SHA-256, 64 hex) on every mutating call
+- Circuit breaker (client side): **5 failures → open for 60 s**
+
+Timeouts & retries:
+
+| Service | Timeout | Retries |
+|---------|---------|---------|
+| ABS | 15 s | 2 |
+| CIB | 5 s | 2 |
+| Face ID | 10 s | 2 |
+| Payment | 10 s | 2 |
+| SMS | 5 s | 0 |
+
+---
+
+## 2. ABS — Contract creation
+
+**POST** `{ABS_URL}/api/contracts`
+
+Headers:
+```
+Authorization: Bearer {ABS_API_KEY}
+Content-Type: application/json
+X-Idempotency-Key: <sha256>
+```
+
+Request body:
+```json
+{
+  "passport": "AB1234567",
+  "amount": "5000.00",
+  "product": "RENT_PAY",
+  "target_iban": "TJ8712345678901234567890",
+  "target_name": "Landlord LLC"
+}
+```
+
+Response 200:
+```json
+{
+  "contract_id": "ABS-2026-000123"
+}
+```
+
+Errors:
+- `4xx` → application rejected (`ABS_FAILED`)
+- `5xx` / timeout → retried up to 2 times, then `E2001` (503)
+
+---
+
+## 3. CIB — Bureau check
+
+**POST** `{CIB_URL}/api/check`
+
+Request body:
+```json
+{
+  "passport": "AB1234567"
+}
+```
+
+Response 200:
+```json
+{
+  "score": 720,
+  "limit": "15000.00"
+}
+```
+
+Rule: **if score < 500 → application rejected** (`E1009`, `CIB_REJECTED`).
+
+Errors:
+- `4xx` → rejected
+- `5xx` / timeout → retried up to 2 times, then `E2001` (503)
+
+---
+
+## 4. Face ID — Biometric verification
+
+**POST** `{FACE_ID_URL}/api/verify`
+
+Request body:
+```json
+{
+  "image": "<base64>",
+  "passport": "AB1234567"
+}
+```
+
+Response 200:
+```json
+{
+  "verified": true
+}
+```
+
+Errors:
+- `verified: false` → `E1008` (400, `BIOMETRIC_FAILED`)
+- `5xx` / timeout → retried up to 2 times, then `E2001` (503)
+
+---
+
+## 5. Payment Gateway — Debit
+
+**POST** `{PAYMENT_URL}/api/debit`
+
+Headers:
+```
+X-Idempotency-Key: <sha256>
+```
+
+Request body:
+```json
+{
+  "card_token": "tok_xxx",
+  "amount": "500.00",
+  "no_accept": true
+}
+```
+
+Response 200:
+```json
+{
+  "success": true,
+  "transaction_id": "PAY-xxx"
+}
+```
+
+Status query (used after timeout):
+**GET** `{PAYMENT_URL}/api/debit/status/{idempotency_key}`
+
+Response 200:
+```json
+{
+  "success": true,
+  "transaction_id": "PAY-xxx"
+}
+```
+
+Rules:
+- `success: false` → retry up to `AUTO_DEBIT_MAX_ATTEMPTS` (3), 24 h apart
+- timeout → query status by idempotency key
+- if query confirms `success: true` → mark installment PAID
+- if unknown → mark `NEEDS_RECOVERY` and require ops resolution
+
+---
+
+## 6. SMS Gateway — OTP
+
+**POST** `{SMS_URL}/api/send`
+
+Request body:
+```json
+{
+  "phone": "+992XXXXXXXXX",
+  "message": "Credit guarantee request. OTP: 123456"
+}
+```
+
+Response 200:
+```json
+{
+  "status": "SENT"
+}
+```
+
+Rules:
+- failures are non-blocking
+- failure is logged in `guarantor_ttl_log.sms_status`
+
+---
+
+## 7. Error codes (engine → client)
+
+| Code | Meaning | HTTP |
+|------|---------|------|
+| E0000 | Success | 200 |
+| E0001 | Pending guarantor approval | 200 |
+| E0002 | Duplicate request | 409 |
+| E1001 | Unknown product or invalid amount | 400 |
+| E1002 | Unknown product | 400 |
+| E1003 | Guarantor required | 400 |
+| E1004 | Guarantor not found | 404 |
+| E1005 | Guarantor turnover insufficient | 400 |
+| E1006 | Invalid IBAN | 400 |
+| E1007 | PTI exceeds limit | 400 |
+| E1008 | Biometric failed | 400 |
+| E1009 | CIB score too low | 400 |
+| E1010 | Rate limit exceeded | 429 |
+| E1011 | Guarantor already busy | 409 |
+| E1012 | Invalid age | 400 |
+| E1013 | User already has an active loan | 409 |
+| E1014 | Guarantor = user (or passport mismatch) | 400 |
+| E1015 | User is blocked | 403 |
+| E1020 | Invalid or expired OTP | 400 |
+| E1021 | OTP rate limit exceeded | 429 |
+| E1022 | OTP resend failed | 400 |
+| E1030 | Payment failed | 400 |
+| E1040 | Invalid card signature | 400 |
+| E1050 | Ops recovery failed | 400 |
+| E2001 | External service unavailable | 503 |
+| E2002 | Database error | 500 |
+| E2003 | Internal error | 500 |
+| E2004 | Invalid data format | 400 |
+| E2006 | Database unavailable | 503 |
+
+---
+
+## 8. Auth
+
+- External: header `X-API-KEY: {API_KEY}` (≥ 32 chars)
+- Internal: header `X-API-KEY: {INTERNAL_API_KEY}` (≥ 32 chars, ≠ `API_KEY`)
+
+All comparisons use **constant-time** compare.
+
+---
+
+## 9. Idempotency
+
+- `request_id` in credit application — unique per submission
+- `X-Idempotency-Key` on outbound calls — SHA-256, derived from internal state
+- Repayment idempotency stored for **7 days**
+- Auto-debit idempotency derived as `sha256('autodebit:{loan_id}:{installment_id}')`
+
+---
+
+## 10. Data formats
+
+- Dates: `YYYY-MM-DD`
+- Timestamps: ISO-8601 UTC (`2026-09-13T10:00:00+00:00`)
+- Amounts: decimal string (`"5000.00"`) — never float
+- IBAN: `TJ` + 25-27 alphanumeric
+- Phone: `+992XXXXXXXXX`
+- Passport: series (2 letters) + number (7-9 digits)
+- JSON: UTF-8, no trailing commas
+
+---
+
+## 11. Health & readiness
+
+- `GET /api/v1/system/health` — always returns `200` if engine is alive
+- `GET /api/v1/system/ready` — returns `200` only when `status == HEALTHY`; otherwise `503`
+
+Both endpoints are unauthenticated (used by load balancers).
+
+---
+
+## 12. Certificates
+
+Place in `/app/certs/`:
+
+```
+client.crt   — client certificate (PEM)
+client.key   — client private key (PEM)
+ca.crt       — bank CA certificate (PEM)
+```
+
+In `ENV=production`, all three are mandatory. The engine refuses to start without them.
+
+---
+
+## 13. Contact
+
+**Author & Architect:** Alikulov Sayfiddin Bakhriddinovich
+**Phone:** +992 01 416 12 12
+**Email:** seifddinalikulov@gmail.com
