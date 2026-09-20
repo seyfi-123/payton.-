@@ -810,7 +810,7 @@ class CreditEngine:
             existing = await conn.fetchrow(
                 'SELECT id, status FROM applications WHERE request_id = $1',
                 request_id)
-            if existing:
+                if existing:
                 # ИСЛОҲ (патчи амниятӣ #2): якум ислоҳ танҳо 'PENDING_CHECKS'-ро
                 # тафтиш мекард, вале дар воқеъ Марҳилаи 2 (CIB/Face-ID)
                 # ҳангоми нокомӣ статусро фавран ба 'ERROR_EXTERNAL'
@@ -823,7 +823,7 @@ class CreditEngine:
             # дар навбат аст. Дархости такрорӣ бояд ҲАМОН ҷавоби
             # якумро (200) гирад, на 503.
             # ──────────────────────────────────────────────────
-    if existing['status'] == 'PENDING_REVIEW':
+     if existing['status'] == 'PENDING_REVIEW':
                 return {
                     'code': 'E0003',
                     'status': 'PENDING_REVIEW',
@@ -836,7 +836,7 @@ class CreditEngine:
 
             RETRYABLE_STATUSES = ('PENDING_CHECKS', 'ERROR_EXTERNAL',
                                    'ABS_FAILED', 'ERROR_PHASE3')
-        if existing['status'] in RETRYABLE_STATUSES:
+            if existing['status'] in RETRYABLE_STATUSES:
                 return {'code': 'E2001', 'status': 'PROCESSING_INCOMPLETE',
                         'application_id': existing['id'],
                         'reason': 'Коркарди кӯшиши қаблӣ нотамом монд '
