@@ -823,30 +823,25 @@ class CreditEngine:
             # дар навбат аст. Дархости такрорӣ бояд ҲАМОН ҷавоби
             # якумро (200) гирад, на 503.
             # ──────────────────────────────────────────────────
-     if existing['status'] == 'PENDING_REVIEW':
-                return {
-                    'code': 'E0003',
-                    'status': 'PENDING_REVIEW',
-                    'application_id': existing['id'],
-                    'message': 'Аризаи шумо қабул шуд ва дар арафаи '
-                                'баррасии иловагист. Мо ба зудӣ бо шумо '
-                                'тамос мегирем.',
-                    'http_status': 200,
-                }
-
-            RETRYABLE_STATUSES = ('PENDING_CHECKS', 'ERROR_EXTERNAL',
-                                   'ABS_FAILED', 'ERROR_PHASE3')
-            if existing['status'] in RETRYABLE_STATUSES:
-                return {'code': 'E2001', 'status': 'PROCESSING_INCOMPLETE',
+                if existing['status'] == 'PENDING_REVIEW':
+                    return {
+                        'code': 'E0003',
+                        'status': 'PENDING_REVIEW',
                         'application_id': existing['id'],
-                        'reason': 'Коркарди кӯшиши қаблӣ нотамом монд '
-                                  '(хидмати беруна дастнорас буд). '
-                                  'Лутфан баъдтар такрор кунед.',
-                        'http_status': 503}
-            return {'code': 'E0002', 'status': 'DUPLICATE',
-                    'application_id': existing['id'],
-                    'reason': 'Request already processed.',
-                    'http_status': 409}
+                        'message': 'Аризаи шумо қабул шуд ва дар арафаи баррасии иловагист. Мо ба зудӣ бо шумо тамос мегирем.',
+                        'http_status': 200,
+                    }
+                RETRYABLE_STATUSES = ('PENDING_CHECKS', 'ERROR_EXTERNAL', 'ABS_FAILED', 'ERROR_PHASE3')
+                if existing['status'] in RETRYABLE_STATUSES:
+                    return {'code': 'E2001', 'status': 'PROCESSING_INCOMPLETE',
+                            'application_id': existing['id'],
+                            'reason': 'Коркарди кӯшиши қаблӣ нотамом монд (хидмати беруна дастнорас буд). Лутфан баъдтар такрор кунед.',
+                            'http_status': 503}
+                return {'code': 'E0002', 'status': 'DUPLICATE',
+                        'application_id': existing['id'],
+                        'reason': 'Request already processed.',
+                        'http_status': 409}
+
             lock_key = int(passport_hmac[:15], 16) & 0x7FFFFFFFFFFFFFFF
             await conn.execute('SELECT pg_advisory_xact_lock($1)', lock_key)
 
