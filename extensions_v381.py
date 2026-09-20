@@ -129,10 +129,6 @@ class PaymentLifecycleMixin:
                     'http_status': 200,
                 }
 
-            # ИСЛОҲ (v3.8.2): пештар HOLD ягон санҷиши суръат надошт —
-            # мизоҷ метавонист даҳҳо HOLD-ро зуд-зуд эҷод кунад.
-            # Ҳоло ҳамон VelocityMixin (агар бор шуда бошад) истифода
-            # мешавад, бо passport_sn_hmac-и мизоҷи ҳамин installment.
             if hasattr(self, '_check_velocity'):
                 ok, err_code, reason = await self._check_velocity(
                     conn, row['passport_sn_hmac'], amount, client_ip)
