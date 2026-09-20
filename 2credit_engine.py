@@ -782,13 +782,7 @@ class CreditEngine:
                 'SELECT id, status FROM applications WHERE request_id = $1',
                 request_id)
             if existing:
-                # ИСЛОҲ (v3.8.2): пештар дар ин ҷо новобаста аз status
-                # ҳамеша 409 (Duplicate) бармегашт. Агар кӯшиши аввал
-                # дар Марҳилаи 2 (CIB/Face-ID) бо 503 қатъ шуда бошад,
-                # ariza ҳанӯз PENDING_CHECKS аст — ин ВОҚЕАН дуплика
-                # нест, балки коркарди нотамом. Мизоҷ бояд донад, ки
-                # бояд такрор кунад (503), на ин ки ariza аллакай тайёр
-                # аст (409).
+            
                 if existing['status'] == 'PENDING_CHECKS':
                     return {'code': 'E2001', 'status': 'PROCESSING_INCOMPLETE',
                             'application_id': existing['id'],
@@ -803,12 +797,7 @@ class CreditEngine:
             lock_key = int(passport_hmac[:15], 16) & 0x7FFFFFFFFFFFFFFF
             await conn.execute('SELECT pg_advisory_xact_lock($1)', lock_key)
 
-            # ИСЛОҲ (v3.8.2): пештар _check_velocity/_record_velocity
-            # (VelocityMixin, extensions_v381.py) дар ин ҷо ҳаргиз даъват
-            # намешуданд — яъне лимитҳои 5/сония, 20/соат, 10,000 TJS/рӯз,
-            # 100,000 TJS/моҳ амалан ҳеҷ гоҳ иҷро намешуданд. Ҳоло, агар
-            # extensions бор шуда бошанд, пеш аз сабти ариза санҷиш иҷро
-            # мешавад ва баъд аз сабт дархост дар velocity_log қайд мешавад.
+            
             if hasattr(self, '_check_velocity'):
                 ok, err_code, reason = await self._check_velocity(
                     conn, passport_hmac, amount, client_ip)
