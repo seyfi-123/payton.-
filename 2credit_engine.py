@@ -447,9 +447,7 @@ class Config:
         'FACE_ID_URL', 'FACE_ID_API_KEY', 'ABS_URL', 'ABS_API_KEY',
         'PAYMENT_URL', 'PAYMENT_API_KEY', 'SMS_URL', 'SMS_API_KEY',
         'CARD_SIGNATURE_KEY_HEX',
-        # ИСЛОҲ (патчи амниятӣ): SIGNING_SECRET пештар дар ин рӯйхат набуд,
-        # бинобар ин сервер бе он ҳам бемалол оғоз мешуд ва ҳимояи
-        # HMAC/X-Signature ба таври хомӯш ғайрифаъол мемонд.
+    
         'SIGNING_SECRET')
 
     @classmethod
@@ -738,14 +736,7 @@ class CreditEngine:
                 await self._mark_status(application_id, stage2['reason_code'],
                                         passport_hmac, stage2['reason'])
                 return stage2['response']
-            # ИСЛОҲ (патчи амниятӣ #3): пештар дар ин ҷо танҳо
-            # ERROR_EXTERNAL + 503-и хушк бармегашт — мизоҷи воқеӣ
-            # ҳељ чиз намефаҳмид ва ariza абадан "мурда" мемонд. Ҳоло:
-            # ariza ба PENDING_REVIEW мегузарад, ба мизоҷ СМС-и фаҳмо
-            # меравад, ва ҷавоб 200/graceful мешавад, на 503-и хушк.
-            # (worker-и _review_escalation_loop баъдтар, агар зиёда аз
-            # Config.REVIEW_MAX_WAIT_HOURS соат ҳал нашавад, ariza-ро
-            # ба таври возеҳ REJECTED мекунад — на абадан "овезон".)
+            
             await self._mark_error(application_id, 'PENDING_REVIEW',
                                    'external service unavailable — queued')
             if user_phone:
@@ -811,13 +802,7 @@ class CreditEngine:
                 'SELECT id, status FROM applications WHERE request_id = $1',
                 request_id)
             if existing:
-                # ИСЛОҲ (патчи амниятӣ #2): якум ислоҳ танҳо 'PENDING_CHECKS'-ро
-                # тафтиш мекард, вале дар воқеъ Марҳилаи 2 (CIB/Face-ID)
-                # ҳангоми нокомӣ статусро фавран ба 'ERROR_EXTERNAL'
-                # мегузаронад (ниг. _mark_error, сатри ~735/2056 — ҳамон
-                # se ҳолате, ки худи код ҳамчун "нокомии беруна, бехатар
-                # барои такрор" мешиносад). Бинобар ин ҳамаи ин se ҳолат
-                # бояд якхела мулоҳиза шаванд.
+                
                 RETRYABLE_STATUSES = ('PENDING_CHECKS', 'ERROR_EXTERNAL',
                                        'ABS_FAILED', 'ERROR_PHASE3',
                                        'PENDING_REVIEW')
@@ -835,12 +820,7 @@ class CreditEngine:
             lock_key = int(passport_hmac[:15], 16) & 0x7FFFFFFFFFFFFFFF
             await conn.execute('SELECT pg_advisory_xact_lock($1)', lock_key)
 
-            # ИСЛОҲ (патчи амниятӣ): пештар _check_velocity/_record_velocity
-            # (VelocityMixin, extensions_v381.py) дар ин ҷо ҳаргиз даъват
-            # намешуданд — яъне лимитҳои 5/сония, 20/соат, 10,000 TJS/рӯз,
-            # 100,000 TJS/моҳ амалан ҳеҷ гоҳ иҷро намешуданд. Ҳоло, агар
-            # extensions бор шуда бошанд, пеш аз сабти ариза санҷиш иҷро
-            # мешавад ва баъд аз сабт дархост дар velocity_log қайд мешавад.
+            
             if hasattr(self, '_check_velocity'):
                 ok, err_code, reason = await self._check_velocity(
                     conn, passport_hmac, amount, client_ip)
