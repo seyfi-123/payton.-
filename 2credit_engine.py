@@ -2299,6 +2299,31 @@ app.add_middleware(
         "X-RateLimit-Window",
     ],
 )
+@app.middleware("http")
+async def watchdog_path_traversal_filter(request: Request, call_next):
+    path = request.url.path
+    query = request.url.query
+    raw_path = request.scope.get("raw_path", b"").decode("utf-8", errors="ignore")
+    
+    suspicious_patterns = ["../", "..\\", "etc/passwd", "boot.ini", "%2e%2e"]
+    
+    is_malicious = (
+        any(pattern in path for pattern in suspicious_patterns) or 
+        any(pattern in query for pattern in suspicious_patterns) or
+        any(pattern in raw_path for pattern in suspicious_patterns)
+    )
+    
+    if is_malicious:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "code": "SECURITY_VIOLATION", 
+                "message": "Malicious path traversal attempt blocked."
+            }
+        )
+        
+    return await call_next(request)
+
 
 
 @app.exception_handler(RequestValidationError)
