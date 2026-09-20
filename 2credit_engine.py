@@ -444,9 +444,6 @@ class Config:
         'FACE_ID_URL', 'FACE_ID_API_KEY', 'ABS_URL', 'ABS_API_KEY',
         'PAYMENT_URL', 'PAYMENT_API_KEY', 'SMS_URL', 'SMS_API_KEY',
         'CARD_SIGNATURE_KEY_HEX',
-        # ИСЛОҲ (v3.8.2): SIGNING_SECRET пештар дар ин рӯйхат набуд,
-        # бинобар ин сервер бе он ҳам бемалол оғоз мешуд ва ҳимояи
-        # HMAC/X-Signature ба таври хомӯш ғайрифаъол мемонд.
         'SIGNING_SECRET')
 
     @classmethod
@@ -787,13 +784,6 @@ class CreditEngine:
                         'http_status': 409}
             lock_key = int(passport_hmac[:15], 16) & 0x7FFFFFFFFFFFFFFF
             await conn.execute('SELECT pg_advisory_xact_lock($1)', lock_key)
-
-            # ИСЛОҲ (v3.8.2): пештар _check_velocity/_record_velocity
-            # (VelocityMixin, extensions_v381.py) дар ин ҷо ҳаргиз даъват
-            # намешуданд — яъне лимитҳои 5/сония, 20/соат, 10,000 TJS/рӯз,
-            # 100,000 TJS/моҳ амалан ҳеҷ гоҳ иҷро намешуданд. Ҳоло, агар
-            # extensions бор шуда бошанд, пеш аз сабти ариза санҷиш иҷро
-            # мешавад ва баъд аз сабт дархост дар velocity_log қайд мешавад.
             if hasattr(self, '_check_velocity'):
                 ok, err_code, reason = await self._check_velocity(
                     conn, passport_hmac, amount, client_ip)
