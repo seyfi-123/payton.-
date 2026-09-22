@@ -1,0 +1,92 @@
+name: Payton Production Live Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  live-test:
+    name: 74-test live integration suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests
+          fi
+
+      - name: Check live test file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "74_live_test.py" ]; then
+            echo "ERROR: 74_live_test.py not found"
+            echo "Repository files:"
+            find . -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "Found: 74_live_test.py"
+
+          python -m py_compile 74_live_test.py
+
+          echo "Python syntax check: OK"
+
+      - name: Run 74-test live integration suite
+        shell: bash
+        env:
+          PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
+          PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+          PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
+          PAYTON_ENDPOINT: /api/v1/credit/apply
+
+          MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL }}
+          MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
+          MOCKJET_FACE_KEY: ${{ secrets.MOCKJET_FACE_KEY }}
+          MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
+          MOCKJET_SMS_KEY: ${{ secrets.MOCKJET_SMS_KEY }}
+
+          TEST_USER_PHONE: ${{ secrets.TEST_USER_PHONE }}
+          TEST_GUARANTOR_PHONE: ${{ secrets.TEST_GUARANTOR_PHONE }}
+          UNKNOWN_GUARANTOR_PHONE: ${{ secrets.UNKNOWN_GUARANTOR_PHONE }}
+
+          TEST_PASSPORT_SERIES: ${{ secrets.TEST_PASSPORT_SERIES }}
+          TEST_PASSPORT_NUMBER: ${{ secrets.TEST_PASSPORT_NUMBER }}
+          TEST_DOB: ${{ secrets.TEST_DOB }}
+
+          VALID_UNIVERSITY_IBAN: ${{ secrets.VALID_UNIVERSITY_IBAN }}
+          VALID_LANDLORD_IBAN: ${{ secrets.VALID_LANDLORD_IBAN }}
+          VALID_SELF_IBAN: ${{ secrets.VALID_SELF_IBAN }}
+
+          TEST_FACE_ID_DATA: ${{ secrets.TEST_FACE_ID_DATA }}
+          TEST_GUARANTOR_RELATION: ${{ secrets.TEST_GUARANTOR_RELATION }}
+
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "PAYTON LIVE INTEGRATION TEST"
+          echo "========================================"
+          echo "Payton URL: configured"
+          echo "MockJet URL: configured"
+          echo "Test file: 74_live_test.py"
+          echo "========================================"
+
+          python 74_live_test.py
