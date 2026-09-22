@@ -253,7 +253,7 @@ jobs:
 
           p02 = base_payload(
               product="StudentPay",
-              amount=1000,
+              amount=3000,
           )
 
           p02["university_iban"] = "TJ00000000000000000001"
