@@ -1589,5 +1589,7 @@ jobs:
               ) in tests:
 
                   status, data = mock(
-                      session)
+                      session)results.append((test_id, name, status, data))
+
+PY
 PY
