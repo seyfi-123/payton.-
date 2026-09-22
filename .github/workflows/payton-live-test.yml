@@ -1,1176 +1,370 @@
-
-import sys
-import time
-import json
-import uuid
-import hmac
-import hashlib
-from typing import Any, Dict, Optional, Tuple
-
-import requests
-
-
-# ============================================================
-# CONFIG
-# ============================================================
-
-PAYTON_BASE_URL = os.getenv(
-    "PAYTON_BASE_URL",
-    "https://payton-production.up.railway.app",
-).rstrip("/")
-
-PAYTON_ENDPOINT = os.getenv(
-    "PAYTON_ENDPOINT",
-    "/api/v1/credit/apply",
-)
-
-PAYTON_API_KEY = os.getenv("PAYTON_API_KEY", "").strip()
-PAYTON_SIGNING_SECRET = os.getenv("PAYTON_SIGNING_SECRET", "").strip()
-
-MOCKJET_BASE_URL = os.getenv(
-    "MOCKJET_BASE_URL",
-    "https://mockjet.io/m/5b1fe03c-9ffd-43e6-848c-7fd3a1b711a9",
-).rstrip("/")
-
-# Optional MockJet keys.
-# They are NOT required just to start the script.
-MOCKJET_CIB_KEY = os.getenv("MOCKJET_CIB_KEY", "").strip()
-MOCKJET_FACE_KEY = os.getenv("MOCKJET_FACE_KEY", "").strip()
-MOCKJET_ABS_KEY = os.getenv("MOCKJET_ABS_KEY", "").strip()
-MOCKJET_SMS_KEY = os.getenv("MOCKJET_SMS_KEY", "").strip()
-
-TIMEOUT = int(os.getenv("TEST_TIMEOUT", "30"))
-
-TEST_USER_PHONE = os.getenv(
-    "TEST_USER_PHONE",
-    "+992900000001",
-).strip()
-
-TEST_GUARANTOR_PHONE = os.getenv(
-    "TEST_GUARANTOR_PHONE",
-    "+992900000002",
-).strip()
-
-UNKNOWN_GUARANTOR_PHONE = os.getenv(
-    "UNKNOWN_GUARANTOR_PHONE",
-    "+992900099999",
-).strip()
-
-TEST_PASSPORT_SERIES = os.getenv(
-    "TEST_PASSPORT_SERIES",
-    "AA",
-).strip()
-
-TEST_PASSPORT_NUMBER = os.getenv(
-    "TEST_PASSPORT_NUMBER",
-    "0000001",
-).strip()
-
-TEST_DOB = os.getenv(
-    "TEST_DOB",
-    "2000-01-01",
-).strip()
-
-VALID_UNIVERSITY_IBAN = os.getenv(
-    "VALID_UNIVERSITY_IBAN",
-    "TJ00000000000000000000",
-).strip()
-
-VALID_LANDLORD_IBAN = os.getenv(
-    "VALID_LANDLORD_IBAN",
-    "TJ00000000000000000001",
-).strip()
-
-VALID_SELF_IBAN = os.getenv(
-    "VALID_SELF_IBAN",
-    "TJ00000000000000000002",
-).strip()
-
-TEST_FACE_ID_DATA = os.getenv(
-    "TEST_FACE_ID_DATA",
-    "TEST_FACE_ID_001",
-).strip()
-
-TEST_GUARANTOR_RELATION = os.getenv(
-    "TEST_GUARANTOR_RELATION",
-    "FATHER",
-).strip()
-
-
-# ============================================================
-# COLORS / OUTPUT
-# ============================================================
-
-GREEN = "\033[92m"
-RED = "\033[91m"
-YELLOW = "\033[93m"
-CYAN = "\033[96m"
-RESET = "\033[0m"
-
-
-def ok(text: str) -> None:
-    print(f"{GREEN}✅ {text}{RESET}")
-
-
-def fail(text: str) -> None:
-    print(f"{RED}❌ {text}{RESET}")
-
-
-def info(text: str) -> None:
-    print(f"{CYAN}ℹ️  {text}{RESET}")
-
-
-def warn(text: str) -> None:
-    print(f"{YELLOW}⚠️  {text}{RESET}")
-
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def sha256_hex(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def make_signature(
-    method: str,
-    path: str,
-    body: str,
-    timestamp: int,
-    secret: str,
-) -> str:
-    body_hash = sha256_hex(body)
-
-    canonical = (
-        f"{method.upper()}\n"
-        f"{path}\n"
-        f"{timestamp}\n"
-        f"{body_hash}"
-    )
-
-    digest = hmac.new(
-        secret.encode("utf-8"),
-        canonical.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    return f"{timestamp}.{digest}"
-
-
-def safe_json(response: requests.Response) -> Any:
-    try:
-        return response.json()
-    except Exception:
-        return response.text
-
-
-def short_json(data: Any, limit: int = 700) -> str:
-    try:
-        text = json.dumps(
-            data,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    except Exception:
-        text = str(data)
-
-    if len(text) > limit:
-        return text[:limit] + "..."
-
-    return text
-
-
-# ============================================================
-# PAYTON REQUEST
-# ============================================================
-
-def payton_post(payload: Dict[str, Any]) -> Tuple[int, Any]:
-    if not PAYTON_API_KEY:
-        raise RuntimeError("PAYTON_API_KEY is missing")
-
-    if not PAYTON_SIGNING_SECRET:
-        raise RuntimeError("PAYTON_SIGNING_SECRET is missing")
-
-    url = f"{PAYTON_BASE_URL}{PAYTON_ENDPOINT}"
-
-    body = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-
-    timestamp = int(time.time())
-
-    signature = make_signature(
-        "POST",
-        PAYTON_ENDPOINT,
-        body,
-        timestamp,
-        PAYTON_SIGNING_SECRET,
-    )
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-API-KEY": PAYTON_API_KEY,
-        "X-Signature": signature,
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        data=body.encode("utf-8"),
-        timeout=TIMEOUT,
-    )
-
-    return response.status_code, safe_json(response)
-
-
-# ============================================================
-# PAYLOAD BUILDER
-# ============================================================
-
-def build_payload(
-    product: str,
-    amount: int,
-    *,
-    guarantor: bool = True,
-    bad_guarantor: bool = False,
-    same_guarantor: bool = False,
-    bad_iban: bool = False,
-    bad_dob: bool = False,
-    missing_face: bool = False,
-    bad_request_id: bool = False,
-    duplicate_request_id: Optional[str] = None,
-    user_phone: Optional[str] = None,
-) -> Dict[str, Any]:
-
-    phone = user_phone or TEST_USER_PHONE
-
-    request_id = (
-        duplicate_request_id
-        if duplicate_request_id
-        else f"LIVE_{product}_{uuid.uuid4().hex[:12]}"
-    )
-
-    if bad_request_id:
-        request_id = "BAD"
-
-    payload: Dict[str, Any] = {
-        "request_id": request_id,
-        "product_type": product,
-        "amount": amount,
-        "user_phone": phone,
-        "passport_series": TEST_PASSPORT_SERIES,
-        "passport_number": TEST_PASSPORT_NUMBER,
-        "date_of_birth": (
-            "01-01-2000"
-            if bad_dob
-            else TEST_DOB
-        ),
-        "face_id_data": (
-            ""
-            if missing_face
-            else TEST_FACE_ID_DATA
-        ),
-    }
-
-    if guarantor:
-        if same_guarantor:
-            guarantor_phone = phone
-        elif bad_guarantor:
-            guarantor_phone = UNKNOWN_GUARANTOR_PHONE
-        else:
-            guarantor_phone = TEST_GUARANTOR_PHONE
-
-        payload["guarantor_phone"] = guarantor_phone
-        payload["guarantor_relation"] = TEST_GUARANTOR_RELATION
-
-    if product == "StudentPay":
-        payload["university_iban"] = (
-            "INVALID"
-            if bad_iban
-            else VALID_UNIVERSITY_IBAN
-        )
-
-    elif product == "RentPay":
-        payload["landlord_iban"] = (
-            "INVALID"
-            if bad_iban
-            else VALID_LANDLORD_IBAN
-        )
-
-    elif product == "DailyPay":
-        payload["self_iban"] = (
-            "INVALID"
-            if bad_iban
-            else VALID_SELF_IBAN
-        )
-
-    return payload
-
-
-# ============================================================
-# MOCKJET
-# ============================================================
-
-def mock_headers(key: str) -> Dict[str, str]:
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-
-    return headers
-
-
-def mock_post(
-    path: str,
-    payload: Dict[str, Any],
-    key: str = "",
-) -> Tuple[int, Any]:
-
-    url = f"{MOCKJET_BASE_URL}{path}"
-
-    response = requests.post(
-        url,
-        headers=mock_headers(key),
-        json=payload,
-        timeout=TIMEOUT,
-    )
-
-    return response.status_code, safe_json(response)
-
-
-# ============================================================
-# 4 MOCKJET TESTS
-# ============================================================
-
-def run_mock_tests() -> Tuple[int, int]:
-
-    print()
-    print("=" * 70)
-    print("MOCKJET INTEGRATION — 4 TESTS")
-    print("=" * 70)
-
-    passed = 0
-    failed = 0
-
-    tests = [
-        (
-            "M01",
-            "CIB",
-            "/api/check",
-            {
-                "passport": "E2E-CIB",
-            },
-            MOCKJET_CIB_KEY,
-            lambda data: (
-                isinstance(data, dict)
-                and (
-                    data.get("verified") is True
-                    or (
-                        data.get("score") == 720
-                        and str(data.get("limit")) == "15000.00"
-                    )
-                )
-            ),
-        ),
-        (
-            "M02",
-            "Face-ID",
-            "/api/verify",
-            {
-                "image": TEST_FACE_ID_DATA,
-            },
-            MOCKJET_FACE_KEY,
-            lambda data: (
-                isinstance(data, dict)
-                and data.get("status") in (
-                    "verified",
-                    "success",
-                    "ok",
-                    "approved",
-                    "sent",
-                )
-            ),
-        ),
-        (
-            "M03",
-            "ABS",
-            "/api/contracts",
-            {
-                "passport": "E2E-ABS",
-                "amount": 1000,
-                "product": "DAILY_PAY",
-            },
-            MOCKJET_ABS_KEY,
-            lambda data: (
-                isinstance(data, dict)
-                and bool(
-                    data.get("contract_id")
-                    or data.get("id")
-                )
-            ),
-        ),
-        (
-            "M04",
-            "SMS",
-            "/api/send",
-            {
-                "phone": TEST_USER_PHONE,
-                "message": "PAYTON E2E TEST",
-            },
-            MOCKJET_SMS_KEY,
-            lambda data: (
-                isinstance(data, dict)
-                and data.get("status") in (
-                    "sent",
-                    "success",
-                    "ok",
-                )
-            ),
-        ),
-    ]
-
-    for (
-        test_id,
-        name,
-        path,
-        payload,
-        key,
-        predicate,
-    ) in tests:
-
-        print()
-        print(f"[{test_id}] {name}")
-
-        try:
-            status, data = mock_post(
-                path,
-                payload,
-                key,
-            )
-
-            passed_test = (
-                200 <= status < 300
-                and predicate(data)
-            )
-
-            print(f"HTTP: {status}")
-            print(f"DATA: {short_json(data)}")
-
-            if passed_test:
-                ok(f"{test_id} PASS")
-                passed += 1
-            else:
-                fail(f"{test_id} FAIL")
-                failed += 1
-
-        except Exception as exc:
-            fail(f"{test_id} ERROR: {exc}")
-            failed += 1
-
-    return passed, failed
-
-
-# ============================================================
-# 70 PAYTON TEST CASES
-# ============================================================
-
-def build_70_tests() -> list:
-
-    tests = []
-
-    # --------------------------------------------------------
-    # STUDENTPAY — 20
-    # --------------------------------------------------------
-
-    tests.extend([
-        ("S01", "StudentPay valid 1000",
-         build_payload("StudentPay", 1000),
-         True),
-
-        ("S02", "StudentPay valid 2000",
-         build_payload("StudentPay", 2000),
-         True),
-
-        ("S03", "StudentPay valid 3000",
-         build_payload("StudentPay", 3000),
-         True),
-
-        ("S04", "StudentPay valid 5000",
-         build_payload("StudentPay", 5000),
-         True),
-
-        ("S05", "StudentPay without guarantor",
-         build_payload(
-             "StudentPay",
-             1000,
-             guarantor=False,
-         ),
-         False),
-
-        ("S06", "StudentPay existing guarantor",
-         build_payload(
-             "StudentPay",
-             1000,
-             guarantor=True,
-         ),
-         True),
-
-        ("S07", "StudentPay unknown guarantor",
-         build_payload(
-             "StudentPay",
-             1000,
-             bad_guarantor=True,
-         ),
-         False),
-
-        ("S08", "StudentPay same guarantor",
-         build_payload(
-             "StudentPay",
-             1000,
-             same_guarantor=True,
-         ),
-         False),
-
-        ("S09", "StudentPay bad university IBAN",
-         build_payload(
-             "StudentPay",
-             1000,
-             bad_iban=True,
-         ),
-         False),
-
-        ("S10", "StudentPay bad DOB",
-         build_payload(
-             "StudentPay",
-             1000,
-             bad_dob=True,
-         ),
-         False),
-
-        ("S11", "StudentPay missing face",
-         build_payload(
-             "StudentPay",
-             1000,
-             missing_face=True,
-         ),
-         False),
-
-        ("S12", "StudentPay bad request id",
-         build_payload(
-             "StudentPay",
-             1000,
-             bad_request_id=True,
-         ),
-         False),
-
-        ("S13", "StudentPay amount 10000",
-         build_payload(
-             "StudentPay",
-             10000,
-         ),
-         True),
-
-        ("S14", "StudentPay amount 15000",
-         build_payload(
-             "StudentPay",
-             15000,
-         ),
-         True),
-
-        ("S15", "StudentPay amount 16000",
-         build_payload(
-             "StudentPay",
-             16000,
-         ),
-         False),
-
-        ("S16", "StudentPay amount 0",
-         build_payload(
-             "StudentPay",
-             0,
-         ),
-         False),
-
-        ("S17", "StudentPay negative amount",
-         build_payload(
-             "StudentPay",
-             -100,
-         ),
-         False),
-
-        ("S18", "StudentPay very large amount",
-         build_payload(
-             "StudentPay",
-             1000000,
-         ),
-         False),
-
-        ("S19", "StudentPay short face",
-         {
-             **build_payload(
-                 "StudentPay",
-                 1000,
-             ),
-             "face_id_data": "TEST",
-         },
-         False),
-
-        ("S20", "StudentPay duplicate request id",
-         build_payload(
-             "StudentPay",
-             1000,
-             duplicate_request_id="LIVE_DUPLICATE_TEST",
-         ),
-         True),
-    ])
-
-    # --------------------------------------------------------
-    # RENTPAY — 20
-    # --------------------------------------------------------
-
-    tests.extend([
-        ("R01", "RentPay valid 1000",
-         build_payload("RentPay", 1000),
-         True),
-
-        ("R02", "RentPay valid 2000",
-         build_payload("RentPay", 2000),
-         True),
-
-        ("R03", "RentPay valid 3000",
-         build_payload("RentPay", 3000),
-         True),
-
-        ("R04", "RentPay valid 5000",
-         build_payload("RentPay", 5000),
-         True),
-
-        ("R05", "RentPay without guarantor",
-         build_payload(
-             "RentPay",
-             1000,
-             guarantor=False,
-         ),
-         False),
-
-        ("R06", "RentPay existing guarantor",
-         build_payload(
-             "RentPay",
-             1000,
-             guarantor=True,
-         ),
-         True),
-
-        ("R07", "RentPay unknown guarantor",
-         build_payload(
-             "RentPay",
-             1000,
-             bad_guarantor=True,
-         ),
-         False),
-
-        ("R08", "RentPay same guarantor",
-         build_payload(
-             "RentPay",
-             1000,
-             same_guarantor=True,
-         ),
-         False),
-
-        ("R09", "RentPay bad landlord IBAN",
-         build_payload(
-             "RentPay",
-             1000,
-             bad_iban=True,
-         ),
-         False),
-
-        ("R10", "RentPay bad DOB",
-         build_payload(
-             "RentPay",
-             1000,
-             bad_dob=True,
-         ),
-         False),
-
-        ("R11", "RentPay missing face",
-         build_payload(
-             "RentPay",
-             1000,
-             missing_face=True,
-         ),
-         False),
-
-        ("R12", "RentPay bad request id",
-         build_payload(
-             "RentPay",
-             1000,
-             bad_request_id=True,
-         ),
-         False),
-
-        ("R13", "RentPay amount 10000",
-         build_payload(
-             "RentPay",
-             10000,
-         ),
-         True),
-
-        ("R14", "RentPay amount 15000",
-         build_payload(
-             "RentPay",
-             15000,
-         ),
-         True),
-
-        ("R15", "RentPay amount 16000",
-         build_payload(
-             "RentPay",
-             16000,
-         ),
-         False),
-
-        ("R16", "RentPay amount 0",
-         build_payload(
-             "RentPay",
-             0,
-         ),
-         False),
-
-        ("R17", "RentPay negative amount",
-         build_payload(
-             "RentPay",
-             -100,
-         ),
-         False),
-
-        ("R18", "RentPay very large amount",
-         build_payload(
-             "RentPay",
-             1000000,
-         ),
-         False),
-
-        ("R19", "RentPay short face",
-         {
-             **build_payload(
-                 "RentPay",
-                 1000,
-             ),
-             "face_id_data": "TEST",
-         },
-         False),
-
-        ("R20", "RentPay duplicate request id",
-         build_payload(
-             "RentPay",
-             1000,
-             duplicate_request_id="LIVE_DUPLICATE_RENT",
-         ),
-         True),
-    ])
-
-    # --------------------------------------------------------
-    # DAILY PAY — 30
-    # --------------------------------------------------------
-
-    tests.extend([
-        ("D01", "DailyPay valid 1000",
-         build_payload("DailyPay", 1000),
-         True),
-
-        ("D02", "DailyPay valid 2000",
-         build_payload("DailyPay", 2000),
-         True),
-
-        ("D03", "DailyPay valid 3000",
-         build_payload("DailyPay", 3000),
-         True),
-
-        ("D04", "DailyPay valid 5000",
-         build_payload("DailyPay", 5000),
-         True),
-
-        ("D05", "DailyPay valid 10000",
-         build_payload("DailyPay", 10000),
-         True),
-
-        ("D06", "DailyPay existing guarantor",
-         build_payload(
-             "DailyPay",
-             1000,
-         ),
-         True),
-
-        ("D07", "DailyPay unknown guarantor",
-         build_payload(
-             "DailyPay",
-             1000,
-             bad_guarantor=True,
-         ),
-         False),
-
-        ("D08", "DailyPay same guarantor",
-         build_payload(
-             "DailyPay",
-             1000,
-             same_guarantor=True,
-         ),
-         False),
-
-        ("D09", "DailyPay without guarantor",
-         build_payload(
-             "DailyPay",
-             1000,
-             guarantor=False,
-         ),
-         False),
-
-        ("D10", "DailyPay bad self IBAN",
-         build_payload(
-             "DailyPay",
-             1000,
-             bad_iban=True,
-         ),
-         False),
-
-        ("D11", "DailyPay bad DOB",
-         build_payload(
-             "DailyPay",
-             1000,
-             bad_dob=True,
-         ),
-         False),
-
-        ("D12", "DailyPay missing face",
-         build_payload(
-             "DailyPay",
-             1000,
-             missing_face=True,
-         ),
-         False),
-
-        ("D13", "DailyPay bad request id",
-         build_payload(
-             "DailyPay",
-             1000,
-             bad_request_id=True,
-         ),
-         False),
-
-        ("D14", "DailyPay amount 12000",
-         build_payload(
-             "DailyPay",
-             12000,
-         ),
-         True),
-
-        ("D15", "DailyPay amount 15000",
-         build_payload(
-             "DailyPay",
-             15000,
-         ),
-         True),
-
-        ("D16", "DailyPay amount 16000",
-         build_payload(
-             "DailyPay",
-             16000,
-         ),
-         False),
-
-        ("D17", "DailyPay amount 0",
-         build_payload(
-             "DailyPay",
-             0,
-         ),
-         False),
-
-        ("D18", "DailyPay negative",
-         build_payload(
-             "DailyPay",
-             -100,
-         ),
-         False),
-
-        ("D19", "DailyPay huge amount",
-         build_payload(
-             "DailyPay",
-             1000000,
-         ),
-         False),
-
-        ("D20", "DailyPay short face",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "face_id_data": "TEST",
-         },
-         False),
-
-        ("D21", "DailyPay duplicate request",
-         build_payload(
-             "DailyPay",
-             1000,
-             duplicate_request_id="LIVE_DUPLICATE_DAILY",
-         ),
-         True),
-
-        ("D22", "DailyPay second valid",
-         build_payload(
-             "DailyPay",
-             2500,
-         ),
-         True),
-
-        ("D23", "DailyPay third valid",
-         build_payload(
-             "DailyPay",
-             3500,
-         ),
-         True),
-
-        ("D24", "DailyPay fourth valid",
-         build_payload(
-             "DailyPay",
-             4500,
-         ),
-         True),
-
-        ("D25", "DailyPay fifth valid",
-         build_payload(
-             "DailyPay",
-             5500,
-         ),
-         True),
-
-        ("D26", "DailyPay invalid DOB",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "date_of_birth": "wrong",
-         },
-         False),
-
-        ("D27", "DailyPay invalid product",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "product_type": "DAILY_PAY",
-         },
-         False),
-
-        ("D28", "DailyPay unknown product",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "product_type": "UNKNOWN",
-         },
-         False),
-
-        ("D29", "DailyPay missing user phone",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "user_phone": "",
-         },
-         False),
-
-        ("D30", "DailyPay extra old phone field",
-         {
-             **build_payload(
-                 "DailyPay",
-                 1000,
-             ),
-             "phone": TEST_USER_PHONE,
-         },
-         False),
-    ])
-
-    return tests
-
-
-# ============================================================
-# 70 PAYTON TEST RUNNER
-# ============================================================
-
-def run_payton_tests() -> Tuple[int, int]:
-
-    print()
-    print("=" * 70)
-    print("PAYTON PRODUCTION LIVE — 70 TESTS")
-    print("=" * 70)
-
-    tests = build_70_tests()
-
-    if len(tests) != 70:
-        raise RuntimeError(
-            f"Expected 70 Payton tests, got {len(tests)}"
-        )
-
-    passed = 0
-    failed = 0
-
-    for index, (
-        test_id,
-        name,
-        payload,
-        expected_success,
-    ) in enumerate(tests, start=1):
-
-        print()
-        print("-" * 70)
-        print(f"{index:02d}/70  [{test_id}] {name}")
-        print(f"Product: {payload.get('product_type')}")
-        print(f"Amount:  {payload.get('amount')}")
-        print(f"Request: {payload.get('request_id')}")
-
-        try:
-            status, data = payton_post(payload)
-
-            print(f"HTTP: {status}")
-            print(f"DATA: {short_json(data)}")
-
-            # ------------------------------------------------
-            # The Payton API currently uses 200 + application
-            # result such as PENDING_REVIEW for accepted live
-            # applications.
-            #
-            # Negative tests are considered PASS when the API
-            # rejects them with a 4xx response.
-            # ------------------------------------------------
-
-            if expected_success:
-                passed_test = (
-                    200 <= status < 300
-                    and isinstance(data, dict)
-                )
-            else:
-                passed_test = (
-                    400 <= status < 500
-                )
-
-            if passed_test:
-                ok(f"{test_id} PASS")
-                passed += 1
-            else:
-                fail(
-                    f"{test_id} FAIL "
-                    f"(expected_success={expected_success})"
-                )
-                failed += 1
-
-        except Exception as exc:
-            fail(f"{test_id} ERROR: {exc}")
-            failed += 1
-
-        # Avoid hammering production API.
-        time.sleep(0.25)
-
-    return passed, failed
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main() -> int:
-
-    print()
-    print("=" * 70)
-    print("PAYTON E2E TEST SUITE")
-    print("4 MockJet + 70 Payton Production = 74 TESTS")
-    print("=" * 70)
-    print()
-
-    info(f"Payton:  {PAYTON_BASE_URL}{PAYTON_ENDPOINT}")
-    info(f"MockJet: {MOCKJET_BASE_URL}")
-    print()
-
-    # --------------------------------------------------------
-    # Required production credentials
-    # --------------------------------------------------------
-
-    missing = []
-
-    if not PAYTON_API_KEY:
-        missing.append("PAYTON_API_KEY")
-
-    if not PAYTON_SIGNING_SECRET:
-        missing.append("PAYTON_SIGNING_SECRET")
-
-    if missing:
-        for item in missing:
-            fail(f"Missing environment variable: {item}")
-
-        print()
-        fail("Payton credentials are missing.")
-        return 2
-
-    # --------------------------------------------------------
-    # MockJet keys are optional.
-    # Do NOT fail the whole suite because FACE/ABS/SMS keys
-    # are absent. MockJet may work without authentication.
-    # --------------------------------------------------------
-
-    if not MOCKJET_CIB_KEY:
-        warn("MOCKJET_CIB_KEY is empty")
-
-    if not MOCKJET_FACE_KEY:
-        warn("MOCKJET_FACE_KEY is empty")
-
-    if not MOCKJET_ABS_KEY:
-        warn("MOCKJET_ABS_KEY is empty")
-
-    if not MOCKJET_SMS_KEY:
-        warn("MOCKJET_SMS_KEY is empty")
-
-    # --------------------------------------------------------
-    # RUN
-    # --------------------------------------------------------
-
-    mock_pass, mock_fail = run_mock_tests()
-
-    payton_pass, payton_fail = run_payton_tests()
-
-    total_pass = mock_pass + payton_pass
-    total_fail = mock_fail + payton_fail
-
-    print()
-    print("=" * 70)
-    print("FINAL RESULT")
-    print("=" * 70)
-
-    print(f"MockJet : {mock_pass}/4 PASS")
-    print(f"Payton  : {payton_pass}/70 PASS")
-    print("-" * 70)
-    print(f"TOTAL   : {total_pass}/74 PASS")
-    print(f"FAILED  : {total_fail}/74")
-    print("=" * 70)
-
-    if total_fail == 0:
-        ok("ALL 74 TESTS PASSED")
-        return 0
-
-    fail(f"{total_fail} TEST(S) FAILED")
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+name: Payton Live Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  payton-e2e-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Write and run Payton + MockJet E2E test script
+        env:
+          PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
+          PAYTON_ENDPOINT: ${{ secrets.PAYTON_ENDPOINT }}
+          PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+          PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
+          MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL }}
+          MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
+          MOCKJET_FACE_KEY: ${{ secrets.MOCKJET_FACE_KEY }}
+          MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
+          MOCKJET_SMS_KEY: ${{ secrets.MOCKJET_SMS_KEY }}
+        run: |
+          cat > payton_live_test.py << 'PYEOF'
+          import os
+          import sys
+          import time
+          import json
+          import uuid
+          import hmac
+          import hashlib
+          from typing import Any, Dict, Optional, Tuple
+
+          import requests
+
+          PAYTON_BASE_URL = os.getenv("PAYTON_BASE_URL", "https://payton-production.up.railway.app").rstrip("/")
+          PAYTON_ENDPOINT = os.getenv("PAYTON_ENDPOINT", "/api/v1/credit/apply")
+          PAYTON_API_KEY = os.getenv("PAYTON_API_KEY", "").strip()
+          PAYTON_SIGNING_SECRET = os.getenv("PAYTON_SIGNING_SECRET", "").strip()
+          MOCKJET_BASE_URL = os.getenv("MOCKJET_BASE_URL", "https://mockjet.io/m/5b1fe03c-9ffd-43e6-848c-7fd3a1b711a9").rstrip("/")
+          MOCKJET_CIB_KEY = os.getenv("MOCKJET_CIB_KEY", "").strip()
+          MOCKJET_FACE_KEY = os.getenv("MOCKJET_FACE_KEY", "").strip()
+          MOCKJET_ABS_KEY = os.getenv("MOCKJET_ABS_KEY", "").strip()
+          MOCKJET_SMS_KEY = os.getenv("MOCKJET_SMS_KEY", "").strip()
+          TIMEOUT = int(os.getenv("TEST_TIMEOUT", "30"))
+          TEST_USER_PHONE = os.getenv("TEST_USER_PHONE", "+992900000001").strip()
+          TEST_GUARANTOR_PHONE = os.getenv("TEST_GUARANTOR_PHONE", "+992900000002").strip()
+          UNKNOWN_GUARANTOR_PHONE = os.getenv("UNKNOWN_GUARANTOR_PHONE", "+992900099999").strip()
+          TEST_PASSPORT_SERIES = os.getenv("TEST_PASSPORT_SERIES", "AA").strip()
+          TEST_PASSPORT_NUMBER = os.getenv("TEST_PASSPORT_NUMBER", "0000001").strip()
+          TEST_DOB = os.getenv("TEST_DOB", "2000-01-01").strip()
+          VALID_UNIVERSITY_IBAN = os.getenv("VALID_UNIVERSITY_IBAN", "TJ00000000000000000000").strip()
+          VALID_LANDLORD_IBAN = os.getenv("VALID_LANDLORD_IBAN", "TJ00000000000000000001").strip()
+          VALID_SELF_IBAN = os.getenv("VALID_SELF_IBAN", "TJ00000000000000000002").strip()
+          TEST_FACE_ID_DATA = os.getenv("TEST_FACE_ID_DATA", "TEST_FACE_ID_001").strip()
+          TEST_GUARANTOR_RELATION = os.getenv("TEST_GUARANTOR_RELATION", "FATHER").strip()
+
+          GREEN = "\033[92m"
+          RED = "\033[91m"
+          YELLOW = "\033[93m"
+          CYAN = "\033[96m"
+          RESET = "\033[0m"
+
+          def ok(text): print(f"{GREEN}✅ {text}{RESET}")
+          def fail(text): print(f"{RED}❌ {text}{RESET}")
+          def info(text): print(f"{CYAN}ℹ️  {text}{RESET}")
+          def warn(text): print(f"{YELLOW}⚠️  {text}{RESET}")
+
+          def sha256_hex(value):
+              return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+          def make_signature(method, path, body, timestamp, secret):
+              body_hash = sha256_hex(body)
+              canonical = f"{method.upper()}\n{path}\n{timestamp}\n{body_hash}"
+              digest = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+              return f"{timestamp}.{digest}"
+
+          def safe_json(response):
+              try:
+                  return response.json()
+              except Exception:
+                  return response.text
+
+          def short_json(data, limit=700):
+              try:
+                  text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+              except Exception:
+                  text = str(data)
+              if len(text) > limit:
+                  return text[:limit] + "..."
+              return text
+
+          def payton_post(payload):
+              if not PAYTON_API_KEY:
+                  raise RuntimeError("PAYTON_API_KEY is missing")
+              if not PAYTON_SIGNING_SECRET:
+                  raise RuntimeError("PAYTON_SIGNING_SECRET is missing")
+              url = f"{PAYTON_BASE_URL}{PAYTON_ENDPOINT}"
+              body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+              timestamp = int(time.time())
+              signature = make_signature("POST", PAYTON_ENDPOINT, body, timestamp, PAYTON_SIGNING_SECRET)
+              headers = {
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                  "X-API-KEY": PAYTON_API_KEY,
+                  "X-Signature": signature,
+              }
+              response = requests.post(url, headers=headers, data=body.encode("utf-8"), timeout=TIMEOUT)
+              return response.status_code, safe_json(response)
+
+          def build_payload(product, amount, *, guarantor=True, bad_guarantor=False, same_guarantor=False,
+                             bad_iban=False, bad_dob=False, missing_face=False, bad_request_id=False,
+                             duplicate_request_id=None, user_phone=None):
+              phone = user_phone or TEST_USER_PHONE
+              request_id = duplicate_request_id if duplicate_request_id else f"LIVE_{product}_{uuid.uuid4().hex[:12]}"
+              if bad_request_id:
+                  request_id = "BAD"
+              payload = {
+                  "request_id": request_id,
+                  "product_type": product,
+                  "amount": amount,
+                  "user_phone": phone,
+                  "passport_series": TEST_PASSPORT_SERIES,
+                  "passport_number": TEST_PASSPORT_NUMBER,
+                  "date_of_birth": "01-01-2000" if bad_dob else TEST_DOB,
+                  "face_id_data": "" if missing_face else TEST_FACE_ID_DATA,
+              }
+              if guarantor:
+                  if same_guarantor:
+                      guarantor_phone = phone
+                  elif bad_guarantor:
+                      guarantor_phone = UNKNOWN_GUARANTOR_PHONE
+                  else:
+                      guarantor_phone = TEST_GUARANTOR_PHONE
+                  payload["guarantor_phone"] = guarantor_phone
+                  payload["guarantor_relation"] = TEST_GUARANTOR_RELATION
+              if product == "StudentPay":
+                  payload["university_iban"] = "INVALID" if bad_iban else VALID_UNIVERSITY_IBAN
+              elif product == "RentPay":
+                  payload["landlord_iban"] = "INVALID" if bad_iban else VALID_LANDLORD_IBAN
+              elif product == "DailyPay":
+                  payload["self_iban"] = "INVALID" if bad_iban else VALID_SELF_IBAN
+              return payload
+
+          def mock_headers(key):
+              headers = {"Content-Type": "application/json", "Accept": "application/json"}
+              if key:
+                  headers["Authorization"] = f"Bearer {key}"
+              return headers
+
+          def mock_post(path, payload, key=""):
+              url = f"{MOCKJET_BASE_URL}{path}"
+              response = requests.post(url, headers=mock_headers(key), json=payload, timeout=TIMEOUT)
+              return response.status_code, safe_json(response)
+
+          def run_mock_tests():
+              print()
+              print("=" * 70)
+              print("MOCKJET INTEGRATION — 4 TESTS")
+              print("=" * 70)
+              passed = 0
+              failed = 0
+              tests = [
+                  ("M01", "CIB", "/api/check", {"passport": "E2E-CIB"}, MOCKJET_CIB_KEY,
+                   lambda data: isinstance(data, dict) and (
+                       data.get("verified") is True
+                       or (data.get("score") == 720 and str(data.get("limit")) == "15000.00")
+                   )),
+                  ("M02", "Face-ID", "/api/verify", {"image": TEST_FACE_ID_DATA}, MOCKJET_FACE_KEY,
+                   lambda data: isinstance(data, dict) and data.get("status") in ("verified", "success", "ok", "approved", "sent")),
+                  ("M03", "ABS", "/api/contracts", {"passport": "E2E-ABS", "amount": 1000, "product": "DAILY_PAY"}, MOCKJET_ABS_KEY,
+                   lambda data: isinstance(data, dict) and bool(data.get("contract_id") or data.get("id"))),
+                  ("M04", "SMS", "/api/send", {"phone": TEST_USER_PHONE, "message": "PAYTON E2E TEST"}, MOCKJET_SMS_KEY,
+                   lambda data: isinstance(data, dict) and data.get("status") in ("sent", "success", "ok")),
+              ]
+              for test_id, name, path, payload, key, predicate in tests:
+                  print()
+                  print(f"[{test_id}] {name}")
+                  try:
+                      status, data = mock_post(path, payload, key)
+                      passed_test = 200 <= status < 300 and predicate(data)
+                      print(f"HTTP: {status}")
+                      print(f"DATA: {short_json(data)}")
+                      if passed_test:
+                          ok(f"{test_id} PASS")
+                          passed += 1
+                      else:
+                          fail(f"{test_id} FAIL")
+                          failed += 1
+                  except Exception as exc:
+                      fail(f"{test_id} ERROR: {exc}")
+                      failed += 1
+              return passed, failed
+
+          def build_70_tests():
+              tests = []
+              tests.extend([
+                  ("S01", "StudentPay valid 1000", build_payload("StudentPay", 1000), True),
+                  ("S02", "StudentPay valid 2000", build_payload("StudentPay", 2000), True),
+                  ("S03", "StudentPay valid 3000", build_payload("StudentPay", 3000), True),
+                  ("S04", "StudentPay valid 5000", build_payload("StudentPay", 5000), True),
+                  ("S05", "StudentPay without guarantor", build_payload("StudentPay", 1000, guarantor=False), False),
+                  ("S06", "StudentPay existing guarantor", build_payload("StudentPay", 1000, guarantor=True), True),
+                  ("S07", "StudentPay unknown guarantor", build_payload("StudentPay", 1000, bad_guarantor=True), False),
+                  ("S08", "StudentPay same guarantor", build_payload("StudentPay", 1000, same_guarantor=True), False),
+                  ("S09", "StudentPay bad university IBAN", build_payload("StudentPay", 1000, bad_iban=True), False),
+                  ("S10", "StudentPay bad DOB", build_payload("StudentPay", 1000, bad_dob=True), False),
+                  ("S11", "StudentPay missing face", build_payload("StudentPay", 1000, missing_face=True), False),
+                  ("S12", "StudentPay bad request id", build_payload("StudentPay", 1000, bad_request_id=True), False),
+                  ("S13", "StudentPay amount 10000", build_payload("StudentPay", 10000), True),
+                  ("S14", "StudentPay amount 15000", build_payload("StudentPay", 15000), True),
+                  ("S15", "StudentPay amount 16000", build_payload("StudentPay", 16000), False),
+                  ("S16", "StudentPay amount 0", build_payload("StudentPay", 0), False),
+                  ("S17", "StudentPay negative amount", build_payload("StudentPay", -100), False),
+                  ("S18", "StudentPay very large amount", build_payload("StudentPay", 1000000), False),
+                  ("S19", "StudentPay short face", {**build_payload("StudentPay", 1000), "face_id_data": "TEST"}, False),
+                  ("S20", "StudentPay duplicate request id", build_payload("StudentPay", 1000, duplicate_request_id="LIVE_DUPLICATE_TEST"), True),
+              ])
+              tests.extend([
+                  ("R01", "RentPay valid 1000", build_payload("RentPay", 1000), True),
+                  ("R02", "RentPay valid 2000", build_payload("RentPay", 2000), True),
+                  ("R03", "RentPay valid 3000", build_payload("RentPay", 3000), True),
+                  ("R04", "RentPay valid 5000", build_payload("RentPay", 5000), True),
+                  ("R05", "RentPay without guarantor", build_payload("RentPay", 1000, guarantor=False), False),
+                  ("R06", "RentPay existing guarantor", build_payload("RentPay", 1000, guarantor=True), True),
+                  ("R07", "RentPay unknown guarantor", build_payload("RentPay", 1000, bad_guarantor=True), False),
+                  ("R08", "RentPay same guarantor", build_payload("RentPay", 1000, same_guarantor=True), False),
+                  ("R09", "RentPay bad landlord IBAN", build_payload("RentPay", 1000, bad_iban=True), False),
+                  ("R10", "RentPay bad DOB", build_payload("RentPay", 1000, bad_dob=True), False),
+                  ("R11", "RentPay missing face", build_payload("RentPay", 1000, missing_face=True), False),
+                  ("R12", "RentPay bad request id", build_payload("RentPay", 1000, bad_request_id=True), False),
+                  ("R13", "RentPay amount 10000", build_payload("RentPay", 10000), True),
+                  ("R14", "RentPay amount 15000", build_payload("RentPay", 15000), True),
+                  ("R15", "RentPay amount 16000", build_payload("RentPay", 16000), False),
+                  ("R16", "RentPay amount 0", build_payload("RentPay", 0), False),
+                  ("R17", "RentPay negative amount", build_payload("RentPay", -100), False),
+                  ("R18", "RentPay very large amount", build_payload("RentPay", 1000000), False),
+                  ("R19", "RentPay short face", {**build_payload("RentPay", 1000), "face_id_data": "TEST"}, False),
+                  ("R20", "RentPay duplicate request id", build_payload("RentPay", 1000, duplicate_request_id="LIVE_DUPLICATE_RENT"), True),
+              ])
+              tests.extend([
+                  ("D01", "DailyPay valid 1000", build_payload("DailyPay", 1000), True),
+                  ("D02", "DailyPay valid 2000", build_payload("DailyPay", 2000), True),
+                  ("D03", "DailyPay valid 3000", build_payload("DailyPay", 3000), True),
+                  ("D04", "DailyPay valid 5000", build_payload("DailyPay", 5000), True),
+                  ("D05", "DailyPay valid 10000", build_payload("DailyPay", 10000), True),
+                  ("D06", "DailyPay existing guarantor", build_payload("DailyPay", 1000), True),
+                  ("D07", "DailyPay unknown guarantor", build_payload("DailyPay", 1000, bad_guarantor=True), False),
+                  ("D08", "DailyPay same guarantor", build_payload("DailyPay", 1000, same_guarantor=True), False),
+                  ("D09", "DailyPay without guarantor", build_payload("DailyPay", 1000, guarantor=False), False),
+                  ("D10", "DailyPay bad self IBAN", build_payload("DailyPay", 1000, bad_iban=True), False),
+                  ("D11", "DailyPay bad DOB", build_payload("DailyPay", 1000, bad_dob=True), False),
+                  ("D12", "DailyPay missing face", build_payload("DailyPay", 1000, missing_face=True), False),
+                  ("D13", "DailyPay bad request id", build_payload("DailyPay", 1000, bad_request_id=True), False),
+                  ("D14", "DailyPay amount 12000", build_payload("DailyPay", 12000), True),
+                  ("D15", "DailyPay amount 15000", build_payload("DailyPay", 15000), True),
+                  ("D16", "DailyPay amount 16000", build_payload("DailyPay", 16000), False),
+                  ("D17", "DailyPay amount 0", build_payload("DailyPay", 0), False),
+                  ("D18", "DailyPay negative", build_payload("DailyPay", -100), False),
+                  ("D19", "DailyPay huge amount", build_payload("DailyPay", 1000000), False),
+                  ("D20", "DailyPay short face", {**build_payload("DailyPay", 1000), "face_id_data": "TEST"}, False),
+                  ("D21", "DailyPay duplicate request", build_payload("DailyPay", 1000, duplicate_request_id="LIVE_DUPLICATE_DAILY"), True),
+                  ("D22", "DailyPay second valid", build_payload("DailyPay", 2500), True),
+                  ("D23", "DailyPay third valid", build_payload("DailyPay", 3500), True),
+                  ("D24", "DailyPay fourth valid", build_payload("DailyPay", 4500), True),
+                  ("D25", "DailyPay fifth valid", build_payload("DailyPay", 5500), True),
+                  ("D26", "DailyPay invalid DOB", {**build_payload("DailyPay", 1000), "date_of_birth": "wrong"}, False),
+                  ("D27", "DailyPay invalid product", {**build_payload("DailyPay", 1000), "product_type": "DAILY_PAY"}, False),
+                  ("D28", "DailyPay unknown product", {**build_payload("DailyPay", 1000), "product_type": "UNKNOWN"}, False),
+                  ("D29", "DailyPay missing user phone", {**build_payload("DailyPay", 1000), "user_phone": ""}, False),
+                  ("D30", "DailyPay extra old phone field", {**build_payload("DailyPay", 1000), "phone": TEST_USER_PHONE}, False),
+              ])
+              return tests
+
+          def run_payton_tests():
+              print()
+              print("=" * 70)
+              print("PAYTON PRODUCTION LIVE — 70 TESTS")
+              print("=" * 70)
+              tests = build_70_tests()
+              if len(tests) != 70:
+                  raise RuntimeError(f"Expected 70 Payton tests, got {len(tests)}")
+              passed = 0
+              failed = 0
+              for index, (test_id, name, payload, expected_success) in enumerate(tests, start=1):
+                  print()
+                  print("-" * 70)
+                  print(f"{index:02d}/70  [{test_id}] {name}")
+                  print(f"Product: {payload.get('product_type')}")
+                  print(f"Amount:  {payload.get('amount')}")
+                  print(f"Request: {payload.get('request_id')}")
+                  try:
+                      status, data = payton_post(payload)
+                      print(f"HTTP: {status}")
+                      print(f"DATA: {short_json(data)}")
+                      if expected_success:
+                          passed_test = 200 <= status < 300 and isinstance(data, dict)
+                      else:
+                          passed_test = 400 <= status < 500
+                      if passed_test:
+                          ok(f"{test_id} PASS")
+                          passed += 1
+                      else:
+                          fail(f"{test_id} FAIL (expected_success={expected_success})")
+                          failed += 1
+                  except Exception as exc:
+                      fail(f"{test_id} ERROR: {exc}")
+                      failed += 1
+                  time.sleep(0.25)
+              return passed, failed
+
+          def main():
+              print()
+              print("=" * 70)
+              print("PAYTON E2E TEST SUITE")
+              print("4 MockJet + 70 Payton Production = 74 TESTS")
+              print("=" * 70)
+              print()
+              info(f"Payton:  {PAYTON_BASE_URL}{PAYTON_ENDPOINT}")
+              info(f"MockJet: {MOCKJET_BASE_URL}")
+              print()
+              missing = []
+              if not PAYTON_API_KEY:
+                  missing.append("PAYTON_API_KEY")
+              if not PAYTON_SIGNING_SECRET:
+                  missing.append("PAYTON_SIGNING_SECRET")
+              if missing:
+                  for item in missing:
+                      fail(f"Missing environment variable: {item}")
+                  print()
+                  fail("Payton credentials are missing.")
+                  return 2
+              if not MOCKJET_CIB_KEY:
+                  warn("MOCKJET_CIB_KEY is empty")
+              if not MOCKJET_FACE_KEY:
+                  warn("MOCKJET_FACE_KEY is empty")
+              if not MOCKJET_ABS_KEY:
+                  warn("MOCKJET_ABS_KEY is empty")
+              if not MOCKJET_SMS_KEY:
+                  warn("MOCKJET_SMS_KEY is empty")
+              mock_pass, mock_fail = run_mock_tests()
+              payton_pass, payton_fail = run_payton_tests()
+              total_pass = mock_pass + payton_pass
+              total_fail = mock_fail + payton_fail
+              print()
+              print("=" * 70)
+              print("FINAL RESULT")
+              print("=" * 70)
+              print(f"MockJet : {mock_pass}/4 PASS")
+              print(f"Payton  : {payton_pass}/70 PASS")
+              print("-" * 70)
+              print(f"TOTAL   : {total_pass}/74 PASS")
+              print(f"FAILED  : {total_fail}/74")
+              print("=" * 70)
+              if total_fail == 0:
+                  ok("ALL 74 TESTS PASSED")
+                  return 0
+              fail(f"{total_fail} TEST(S) FAILED")
+              return 1
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PYEOF
+          python payton_live_test.py
