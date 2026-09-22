@@ -1589,5 +1589,5 @@ jobs:
               ) in tests:
 
                   status, data = mock(
-                      session
+                      session)
 PY
