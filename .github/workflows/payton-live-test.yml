@@ -256,7 +256,7 @@ jobs:
               amount=3000,
           )
 
-          p02["university_iban"] = "TJ00000000000000000001"
+          p02["university_iban"] = "TJ8712345678901234567890"
 
           status, data = request(p02)
 
@@ -279,7 +279,7 @@ jobs:
               amount=1000,
           )
 
-          p03["landlord_iban"] = "TJ00000000000000000002"
+          p03["landlord_iban"] = "TJ4400000000000000000001"
 
           status, data = request(p03)
 
