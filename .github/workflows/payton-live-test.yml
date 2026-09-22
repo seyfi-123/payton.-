@@ -1590,6 +1590,3 @@ jobs:
 
                   status, data = mock(
                       session)results.append((test_id, name, status, data))
-
-PY
-PY
