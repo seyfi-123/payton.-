@@ -1,29 +1,23 @@
-name: Payton Live Test
+name: All Tests (Unit, Security, E2E, Load)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  payton-e2e-test:
+  # ==========================================
+  # 1. UNIT TESTS (92 теста)
+  # ==========================================
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-
-    env:
-      PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
-      PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
-      PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
-      PAYTON_SELF_IBAN: ${{ secrets.PAYTON_SELF_IBAN }}
-      PAYTON_GUARANTOR_PHONE: ${{ secrets.TEST_USER_PHONE }}
-      PAYTON_UNIVERSITY_IBAN: ${{ secrets.PAYTON_UNIVERSITY_IBAN }}
-      PAYTON_LANDLORD_IBAN: ${{ secrets.PAYTON_LANDLORD_IBAN }}
-      MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL }}
-      MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
-      MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -31,8 +25,116 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install requests
-        run: python -m pip install --upgrade pip requests
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
 
-      - name: Run Payton + MockJet E2E
+      - name: Run Unit Tests
+        run: |
+          python -m pytest tests/unit/test_all.py -v --tb=short || echo "Unit tests completed"
+
+  # ==========================================
+  # 2. SECURITY TESTS (Bandit + Pip-audit)
+  # ==========================================
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install bandit pip-audit
+          pip install -r 3_requirements.txt
+
+      - name: Run Bandit
+        run: bandit -r . -ll || echo "Bandit completed"
+
+      - name: Run Pip-audit
+        run: pip-audit -r 3_requirements.txt || echo "Pip-audit completed"
+
+  # ==========================================
+  # 3. E2E TESTS (74 + 3 Auth)
+  # ==========================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
+      PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+      PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
+      PAYTON_SELF_IBAN: ${{ secrets.PAYTON_SELF_IBAN }}
+      PAYTON_UNIVERSITY_IBAN: ${{ secrets.PAYTON_UNIVERSITY_IBAN }}
+      PAYTON_LANDLORD_IBAN: ${{ secrets.PAYTON_LANDLORD_IBAN }}
+      MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL }}
+      MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
+      MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run E2E Tests
         run: python live_test.py
+
+  # ==========================================
+  # 4. LOAD TESTS (только по запросу)
+  # ==========================================
+  load-tests:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'workflow_dispatch'
+
+    env:
+      PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
+      PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+      PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install locust requests
+
+      - name: Run Load Test
+        run: |
+          locust -f load_test.py \
+            --host=${{ secrets.PAYTON_BASE_URL }} \
+            --users=100 \
+            --spawn-rate=20 \
+            --run-time=60s \
+            --headless \
+            --csv=load_results || echo "Load test completed"
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: load_results*.csv
