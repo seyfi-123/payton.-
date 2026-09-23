@@ -1,0 +1,45 @@
+name: Load Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install locust requests
+      
+      - name: Run load test
+        run: |
+          locust -f load_test.py \
+            --host=${{ secrets.PAYTON_BASE_URL }} \
+            --users=50 \
+            --spawn-rate=10 \
+            --run-time=60s \
+            --headless \
+            --csv=load_results
+      
+      - name: Check results
+        run: |
+          echo "Load test completed"
+          cat load_results_stats.csv || true
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: load_results*.csv
