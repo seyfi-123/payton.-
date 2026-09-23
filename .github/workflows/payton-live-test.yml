@@ -1,0 +1,38 @@
+name: Payton Live Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  payton-e2e-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    env:
+      PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL }}
+      PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+      PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
+      PAYTON_SELF_IBAN: ${{ secrets.PAYTON_SELF_IBAN }}
+      PAYTON_GUARANTOR_PHONE: ${{ secrets.TEST_USER_PHONE }}
+      PAYTON_UNIVERSITY_IBAN: ${{ secrets.PAYTON_UNIVERSITY_IBAN }}
+      PAYTON_LANDLORD_IBAN: ${{ secrets.PAYTON_LANDLORD_IBAN }}
+      MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL }}
+      MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
+      MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: python -m pip install --upgrade pip requests
+
+      - name: Run Payton + MockJet E2E
+        run: python live_test.py
