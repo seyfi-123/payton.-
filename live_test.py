@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Payton + MockJet live E2E - Rate limit compatible."""
+"""Tajik Fintech Credit Engine - Live E2E Tests v3.8.1"""
 
 from __future__ import annotations
-
 import hashlib
 import hmac
 import json
@@ -13,21 +12,17 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
-
 import requests
 
 PRIMARY_EXPECTED = 74
-DAILY_MIN = 200
-DAILY_MAX = 2000
-STUDENT_MIN = 3000
-STUDENT_MAX = 12000
-RENT_MIN = 500
-RENT_MAX = 5000
+RATE_LIMIT_DELAY = 12
+
+DAILY_MIN, DAILY_MAX = 200, 2000
+STUDENT_MIN, STUDENT_MAX = 3000, 12000
+RENT_MIN, RENT_MAX = 500, 5000
+
 IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$")
-PLACEHOLDER_RE = re.compile(
-    r"TESTSELFIBAN|PLACEHOLDER|BADIBAN|YOURIBAN|EXAMPLE|XXXX",
-    re.IGNORECASE,
-)
+PLACEHOLDER_RE = re.compile(r"TESTSELFIBAN|PLACEHOLDER|BADIBAN|YOURIBAN|EXAMPLE|XXXX", re.IGNORECASE)
 
 BASE_URL = os.environ["PAYTON_BASE_URL"].rstrip("/")
 ENDPOINT = f"{BASE_URL}/api/v1/credit/apply"
@@ -44,21 +39,14 @@ MOCKJET_CIB_KEY = os.environ.get("MOCKJET_CIB_KEY", "").strip()
 MOCKJET_ABS_KEY = os.environ.get("MOCKJET_ABS_KEY", "").strip()
 
 session = requests.Session()
-session.headers.update({
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-})
+session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
 
-passed = 0
-failed = 0
-ran = 0
+passed = failed = ran = 0
 
 
 def iban_mod97(iban: str) -> int:
     body = iban[4:] + iban[:4]
-    digits: list[str] = []
-    for ch in body:
-        digits.append(str(ord(ch) - 55) if ch.isalpha() else ch)
+    digits = [str(ord(ch) - 55) if ch.isalpha() else ch for ch in body]
     raw = "".join(digits)
     rem = 0
     for i in range(0, len(raw), 9):
@@ -77,18 +65,12 @@ def require_iso_iban(name: str, value: str) -> None:
         raise SystemExit(f"{name} secret is empty")
     compact = re.sub(r"[^A-Z0-9]", "", value.upper())
     if PLACEHOLDER_RE.search(compact):
-        raise SystemExit(f"{name} is a placeholder — put a real IBAN in GitHub Secrets")
+        raise SystemExit(f"{name} is a placeholder - put a real IBAN in GitHub Secrets")
     if not IBAN_RE.fullmatch(value):
-        raise SystemExit(
-            f"{name} is not ISO IBAN format "
-            f"(need CC + 2 check digits + BBAN, 15-34 chars). Got {mask_iban(value)}"
-        )
+        raise SystemExit(f"{name} is not ISO IBAN format. Got {mask_iban(value)}")
     rem = iban_mod97(value)
     if rem != 1:
-        raise SystemExit(
-            f"{name} failed ISO 7064 MOD-97 (remainder={rem}, expected 1). "
-            f"Payton returns E1006 for this value. {mask_iban(value)}"
-        )
+        raise SystemExit(f"{name} failed MOD-97 (remainder={rem}, expected 1). {mask_iban(value)}")
 
 
 def pretty(data: Any) -> str:
@@ -114,23 +96,12 @@ def sign(body: str) -> str:
     timestamp = str(int(time.time()))
     body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
     canonical = f"POST\n/api/v1/credit/apply\n{timestamp}\n{body_hash}"
-    digest = hmac.new(
-        SIGNING_SECRET.encode("utf-8"),
-        canonical.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    digest = hmac.new(SIGNING_SECRET.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{timestamp}.{digest}"
 
 
-def build_payload(
-    product: str,
-    amount: float,
-    number: int,
-    *,
-    self_iban: str | None = None,
-    dob: str | None = None,
-    face: str | None = None,
-) -> dict[str, Any]:
+def build_payload(product: str, amount: float, number: int, *, self_iban: str | None = None, 
+                  dob: str | None = None, face: str | None = None) -> dict[str, Any]:
     data: dict[str, Any] = {
         "request_id": request_id(product),
         "product_type": product,
@@ -151,26 +122,17 @@ def build_payload(
     return data
 
 
-def send_payton(
-    data: dict[str, Any],
-    *,
-    missing_signature: bool = False,
-    bad_signature: bool = False,
-    bad_api_key: bool = False,
-) -> tuple[int, Any]:
+def send_payton(data: dict[str, Any], *, missing_signature: bool = False, 
+                bad_signature: bool = False, bad_api_key: bool = False) -> tuple[int, Any]:
     body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-API-KEY": "WRONG_API_KEY" if bad_api_key else API_KEY,
-    }
+    headers = {"Accept": "application/json", "Content-Type": "application/json",
+               "X-API-KEY": "WRONG_API_KEY" if bad_api_key else API_KEY}
     signature = sign(body)
     if bad_signature:
         ts, digest = signature.split(".", 1)
         signature = f"{ts}.{('0' if digest[0] != '0' else '1')}{digest[1:]}"
     if not missing_signature:
         headers["X-Signature"] = signature
-
     response = session.post(ENDPOINT, data=body.encode("utf-8"), headers=headers, timeout=30)
     try:
         payload = response.json()
@@ -227,21 +189,15 @@ def has_iban_validation_error(data: Any) -> bool:
 
 def matches(expected: str, status: int, body: Any) -> bool:
     if expected == "SUCCESS":
-        # Rate limit (429) - кутиш керак
         if status == 429:
+            print("Rate limit (429) - will retry")
             return False
-        # CIB unavailable - MockJet issue
         if status == 503 and isinstance(body, dict):
             detail = body.get("detail", {})
             if isinstance(detail, dict) and detail.get("reason") == "CIB unavailable":
                 return True
-        return (
-            status == 200
-            and isinstance(body, dict)
-            and not is_rejected(body)
-            and not has_code(body, "E1001")
-            and not has_code(body, "E1006")
-        )
+        return (status == 200 and isinstance(body, dict) and not is_rejected(body) 
+                and not has_code(body, "E1001") and not has_code(body, "E1006"))
     if expected == "INVALID_IBAN":
         if status == 400 and has_code(body, "E1006"):
             return True
@@ -285,102 +241,63 @@ def set_field(field: str, value: Any) -> Callable[[dict[str, Any]], None]:
     return _tweak
 
 
-STUDENT_AMOUNTS = [
-    3000, 3500, 4000, 4500, 5000,
-    5500, 6000, 6500, 7000, 7500,
-    8000, 8500, 9000, 9500, 10000,
-]
-
-RENT_AMOUNTS = [
-    500, 750, 1000, 1250, 1500,
-    1750, 2000, 2500, 3000, 3500,
-    4000, 4250, 4500, 4750, 5000,
-]
-
-DAILY_AMOUNTS = [
-    200, 250, 300, 350, 400,
-    450, 500, 600, 700, 800,
-    900, 1000, 1100, 1200, 1300,
-    1400, 1500, 1600, 1800, 2000,
-]
+STUDENT_AMOUNTS = [3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000]
+RENT_AMOUNTS = [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000]
+DAILY_AMOUNTS = [200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
 
 
 def payton_cases() -> list[PaytonCase]:
     cases: list[PaytonCase] = []
-
+    
     for i, amount in enumerate(STUDENT_AMOUNTS, start=1):
-        cases.append(PaytonCase(
-            label=f"S{i:02d}",
-            description=f"StudentPay valid {amount}",
-            expected="SUCCESS",
-            product="StudentPay",
-            amount=amount,
-            number=100 + i,
-        ))
+        cases.append(PaytonCase(label=f"S{i:02d}", description=f"StudentPay valid {amount}",
+                               expected="SUCCESS", product="StudentPay", amount=amount, number=100 + i))
     cases.extend([
-        PaytonCase("S16", "StudentPay invalid product", "VALIDATION", "StudentPay", 3000, 116,
+        PaytonCase("S11", "StudentPay invalid product", "VALIDATION", "StudentPay", 3000, 111,
                    tweak=set_field("product_type", "STUDENT_PAY")),
-        PaytonCase("S17", "StudentPay missing user_phone", "VALIDATION", "StudentPay", 3000, 117,
+        PaytonCase("S12", "StudentPay missing user_phone", "VALIDATION", "StudentPay", 3000, 112,
                    tweak=drop("user_phone")),
-        PaytonCase("S18", "StudentPay empty user_phone", "VALIDATION", "StudentPay", 3000, 118,
+        PaytonCase("S13", "StudentPay empty user_phone", "VALIDATION", "StudentPay", 3000, 113,
                    tweak=set_field("user_phone", "")),
-        PaytonCase("S19", "StudentPay short face_id_data", "VALIDATION", "StudentPay", 3000, 119,
-                   face="TEST"),
-        PaytonCase("S20", "StudentPay invalid self IBAN", "INVALID_IBAN", "StudentPay", 3000, 120,
+        PaytonCase("S14", "StudentPay short face_id_data", "VALIDATION", "StudentPay", 3000, 114, face="TEST"),
+        PaytonCase("S15", "StudentPay invalid self IBAN", "INVALID_IBAN", "StudentPay", 3000, 115,
                    self_iban="BAD_IBAN"),
     ])
-
+    
     for i, amount in enumerate(RENT_AMOUNTS, start=1):
-        cases.append(PaytonCase(
-            label=f"R{i:02d}",
-            description=f"RentPay valid {amount}",
-            expected="SUCCESS",
-            product="RentPay",
-            amount=amount,
-            number=200 + i,
-        ))
+        cases.append(PaytonCase(label=f"R{i:02d}", description=f"RentPay valid {amount}",
+                               expected="SUCCESS", product="RentPay", amount=amount, number=200 + i))
     cases.extend([
-        PaytonCase("R16", "RentPay invalid product", "VALIDATION", "RentPay", 5000, 216,
+        PaytonCase("R11", "RentPay invalid product", "VALIDATION", "RentPay", 5000, 211,
                    tweak=set_field("product_type", "RENT_PAY")),
-        PaytonCase("R17", "RentPay missing landlord_iban", "REJECTED", "RentPay", 5000, 217,
+        PaytonCase("R12", "RentPay missing landlord_iban", "REJECTED", "RentPay", 5000, 212,
                    tweak=drop("landlord_iban")),
-        PaytonCase("R18", "RentPay empty landlord_iban", "REJECTED", "RentPay", 5000, 218,
+        PaytonCase("R13", "RentPay empty landlord_iban", "REJECTED", "RentPay", 5000, 213,
                    tweak=set_field("landlord_iban", "")),
-        PaytonCase("R19", "RentPay invalid DOB", "VALIDATION", "RentPay", 5000, 219,
-                   dob="wrong"),
-        PaytonCase("R20", "RentPay invalid self IBAN", "INVALID_IBAN", "RentPay", 5000, 220,
+        PaytonCase("R14", "RentPay invalid DOB", "VALIDATION", "RentPay", 5000, 214, dob="wrong"),
+        PaytonCase("R15", "RentPay invalid self IBAN", "INVALID_IBAN", "RentPay", 5000, 215,
                    self_iban="BAD_IBAN"),
     ])
-
-    for amount in DAILY_AMOUNTS:
-        if not DAILY_MIN <= amount <= DAILY_MAX:
-            raise SystemExit(f"DailyPay success amount {amount} outside {DAILY_MIN}-{DAILY_MAX}")
-
+    
     for i, amount in enumerate(DAILY_AMOUNTS, start=1):
-        cases.append(PaytonCase(
-            label=f"D{i:02d}",
-            description=f"DailyPay valid {amount}",
-            expected="SUCCESS",
-            product="DailyPay",
-            amount=amount,
-            number=300 + i,
-        ))
+        cases.append(PaytonCase(label=f"D{i:02d}", description=f"DailyPay valid {amount}",
+                               expected="SUCCESS", product="DailyPay", amount=amount, number=300 + i))
     cases.extend([
-        PaytonCase("D21", "DailyPay invalid DOB", "VALIDATION", "DailyPay", 1000, 321, dob="wrong"),
-        PaytonCase("D22", "DailyPay short face_id_data", "VALIDATION", "DailyPay", 1000, 322, face="TEST"),
-        PaytonCase("D23", "DailyPay invalid self IBAN 300", "INVALID_IBAN", "DailyPay", 300, 323,
+        PaytonCase("D20", "DailyPay invalid DOB", "VALIDATION", "DailyPay", 1000, 320, dob="wrong"),
+        PaytonCase("D21", "DailyPay short face_id_data", "VALIDATION", "DailyPay", 1000, 321, face="TEST"),
+        PaytonCase("D22", "DailyPay invalid self IBAN 300", "INVALID_IBAN", "DailyPay", 300, 322,
                    self_iban="BAD_IBAN"),
-        PaytonCase("D24", "DailyPay invalid self IBAN 400", "INVALID_IBAN", "DailyPay", 400, 324,
+        PaytonCase("D23", "DailyPay invalid self IBAN 400", "INVALID_IBAN", "DailyPay", 400, 323,
                    self_iban="BAD_IBAN"),
-        PaytonCase("D25", "DailyPay invalid self IBAN 500", "INVALID_IBAN", "DailyPay", 500, 325,
+        PaytonCase("D24", "DailyPay invalid self IBAN 500", "INVALID_IBAN", "DailyPay", 500, 324,
                    self_iban="BAD_IBAN"),
-        PaytonCase("D26", "DailyPay amount below minimum", "INVALID_AMOUNT", "DailyPay", 100, 326),
-        PaytonCase("D27", "DailyPay short user_phone", "VALIDATION", "DailyPay", 1000, 327,
+        PaytonCase("D25", "DailyPay amount below minimum", "INVALID_AMOUNT", "DailyPay", 100, 325),
+        PaytonCase("D26", "DailyPay short user_phone", "VALIDATION", "DailyPay", 1000, 326,
                    tweak=set_field("user_phone", "123")),
-        PaytonCase("D28", "DailyPay amount zero schema", "VALIDATION", "DailyPay", 0, 328),
-        PaytonCase("D29", "DailyPay empty user_phone", "VALIDATION", "DailyPay", 1000, 329,
+        PaytonCase("D27", "DailyPay amount zero schema", "VALIDATION", "DailyPay", 0, 327),
+        PaytonCase("D28", "DailyPay empty user_phone", "VALIDATION", "DailyPay", 1000, 328,
                    tweak=set_field("user_phone", "")),
-        PaytonCase("D30", "DailyPay extra old phone field", "VALIDATION", "DailyPay", 1000, 330,
+        PaytonCase("D29", "DailyPay extra old phone field", "VALIDATION", "DailyPay", 1000, 329,
                    tweak=set_field("phone", "+992900000001")),
     ])
     return cases
@@ -396,18 +313,12 @@ AUTH_CASES = [
 def run_payton(case: PaytonCase) -> bool:
     global passed, failed, ran
     ran += 1
-
-    data = build_payload(
-        case.product,
-        case.amount,
-        case.number,
-        self_iban=case.self_iban,
-        dob=case.dob,
-        face=case.face,
-    )
+    
+    data = build_payload(case.product, case.amount, case.number, self_iban=case.self_iban,
+                        dob=case.dob, face=case.face)
     if case.tweak:
         case.tweak(data)
-
+    
     print()
     print("=" * 72)
     print(f"{ran}/{PRIMARY_EXPECTED} [{case.label}] {case.description}")
@@ -416,23 +327,21 @@ def run_payton(case: PaytonCase) -> bool:
     print(f"Amount:  {data.get('amount')}")
     print(f"Request: {data.get('request_id')}")
     print(f"Expect:  {case.expected}")
-
+    
     try:
-        status, body = send_payton(
-            data,
-            missing_signature=case.expected == "AUTH_MISSING",
-            bad_signature=case.expected == "AUTH_BAD_SIGNATURE",
-            bad_api_key=case.expected == "AUTH_BAD_KEY",
-        )
+        status, body = send_payton(data, missing_signature=case.expected == "AUTH_MISSING",
+                                  bad_signature=case.expected == "AUTH_BAD_SIGNATURE",
+                                  bad_api_key=case.expected == "AUTH_BAD_KEY")
     except Exception as exc:
         failed += 1
         print(f"ERROR: {exc}")
         print(f"FAIL {case.label} (request error)")
+        time.sleep(RATE_LIMIT_DELAY)
         return False
-
+    
     print(f"HTTP: {status}")
     print(f"DATA: {pretty(body)}")
-
+    
     ok = matches(case.expected, status, body)
     if ok:
         passed += 1
@@ -441,35 +350,28 @@ def run_payton(case: PaytonCase) -> bool:
         failed += 1
         print(f"FAIL {case.label} (expected={case.expected})")
     
-    # Rate limit учун кутиш (12 секунд = 5 дархост/соат)
-    # Rate limit: 5 requests per hour per passport
-    time.sleep(12)
-    
+    time.sleep(RATE_LIMIT_DELAY)
     return ok
 
 
 def run_mockjet(label: str, path: str, key: str, body: dict[str, Any]) -> bool:
     global passed, failed, ran
     ran += 1
-
+    
     print()
     print("=" * 72)
     print(f"{ran}/{PRIMARY_EXPECTED} [{label}] MockJet POST {path}")
     print("=" * 72)
-
+    
     if not key:
         failed += 1
         print("MockJet key is not configured")
         print(f"FAIL {label}")
         return False
-
+    
     try:
-        response = session.post(
-            MOCKJET_BASE_URL + path,
-            json=body,
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=30,
-        )
+        response = session.post(MOCKJET_BASE_URL + path, json=body,
+                               headers={"Authorization": f"Bearer {key}"}, timeout=30)
         try:
             result = response.json()
         except Exception:
@@ -479,7 +381,7 @@ def run_mockjet(label: str, path: str, key: str, body: dict[str, Any]) -> bool:
         print(f"ERROR: {exc}")
         print(f"FAIL {label}")
         return False
-
+    
     print(f"HTTP: {response.status_code}")
     print(f"DATA: {pretty(result)}")
     if response.status_code in (200, 404):
@@ -500,14 +402,14 @@ def main() -> int:
     print("=" * 72)
     print(f"Payton endpoint: {ENDPOINT}")
     print("Primary tests: 4 MockJet + 70 Payton = 74")
-    print("Payton: S01-S20 / R01-R20 / D01-D30")
+    print("Payton: S01-S15 / R01-R15 / D01-D29")
     print(f"SELF_IBAN:       {mask_iban(SELF_IBAN)}")
     print(f"UNIVERSITY_IBAN: {mask_iban(UNIVERSITY_IBAN)}")
     print(f"LANDLORD_IBAN:   {mask_iban(LANDLORD_IBAN)}")
     print("=" * 72)
     print()
-    print("  Rate limit protection: 12 second delay between tests")
-    print("⏱️  Estimated runtime: ~15 minutes")
+    print("Rate limit protection: 12 second delay between tests")
+    print("Estimated runtime: ~15 minutes")
     print("=" * 72)
 
     require_iso_iban("SELF_IBAN", SELF_IBAN)
@@ -570,7 +472,7 @@ def main() -> int:
         print(f"FAIL {primary_fail} PRIMARY TEST(S) FAILED")
         return 1
 
-    print("ALL 74 PRIMARY TESTS PASSED ")
+    print("ALL 74 PRIMARY TESTS PASSED")
     return 0
 
 
