@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Tajik Fintech Credit Engine - Live E2E Tests v4.2.0
+Tajik Fintech Credit Engine - Live E2E Tests v4.3.0 (FINAL)
 74 Primary Tests + 3 Auth Tests
-MockJet 429 = PASS | Payton 409 E1023 = PASS | 503 = PASS
+All MockJet endpoints use REAL paths: /api/check, /api/verify, /api/contracts
 Runtime: ~2 minutes
 """
 
@@ -452,7 +452,7 @@ def run_mockjet(label: str, path: str, key: str, body: dict[str, Any]) -> bool:
         return False
     else:
         failed += 1
-        print(f"FAIL {label}  (Unexpected status: {response.status_code})")
+        print(f"FAIL {label} ❌ (Unexpected status: {response.status_code})")
         return False
 
 
@@ -463,10 +463,11 @@ def main() -> int:
 
     print()
     print("=" * 72)
-    print("PAYTON + MOCKJET E2E TEST v4.2.0")
+    print("PAYTON + MOCKJET E2E TEST v4.3.0 (FINAL)")
     print("=" * 72)
     print(f"Payton endpoint: {ENDPOINT}")
     print("Primary tests: 4 MockJet + 70 Payton = 74")
+    print("MockJet paths: /api/check, /api/verify, /api/contracts")
     print("Payton: S01-S15 / R01-R15 / D01-D40")
     print(f"SELF_IBAN:       {mask_iban(SELF_IBAN)}")
     print(f"UNIVERSITY_IBAN: {mask_iban(UNIVERSITY_IBAN)}")
@@ -489,8 +490,9 @@ def main() -> int:
     print("#" * 72)
     print("MOCKJET E2E")
     print("#" * 72)
+    # ИСПРАВЛЕНО: /api/score → /api/verify (существующий endpoint в MockJet)
     run_mockjet("M01", "/api/check", MOCKJET_CIB_KEY, {"passport": "AA10000101"})
-    run_mockjet("M02", "/api/score", MOCKJET_CIB_KEY, {"passport": "AA10000101"})
+    run_mockjet("M02", "/api/verify", MOCKJET_CIB_KEY, {"passport": "AA10000101", "face_data": "test"})
     run_mockjet("M03", "/api/contracts", MOCKJET_ABS_KEY, {
         "passport": "AA10000101", "amount": 1000, "product": "DAILY_PAY",
     })
@@ -538,7 +540,7 @@ def main() -> int:
         return 1
 
     if primary_ran != PRIMARY_EXPECTED:
-        print(f"️  Warning: expected {PRIMARY_EXPECTED}, ran {primary_ran}")
+        print(f"⚠️  Warning: expected {PRIMARY_EXPECTED}, ran {primary_ran}")
         return 1
 
     print(f"ALL {PRIMARY_EXPECTED} PRIMARY TESTS PASSED ✅")
