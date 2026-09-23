@@ -2,6 +2,8 @@ name: Load Test
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   load-test:
@@ -32,8 +34,8 @@ jobs:
         run: |
           locust -f load_test.py \
             --host=${{ secrets.PAYTON_BASE_URL }} \
-            --users=10 \
-            --spawn-rate=2 \
+            --users=100 \
+            --spawn-rate=20 \
             --run-time=60s \
             --headless \
             --csv=load_results
