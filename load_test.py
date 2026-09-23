@@ -22,31 +22,38 @@ def sign_request(body: str) -> str:
 
 
 class CreditUser(HttpUser):
-    wait_time = between(0.1, 0.5)
+    wait_time = between(0.01, 0.05)  # Уменьшено для увеличения скорости
+    host = os.environ.get("PAYTON_BASE_URL", "http://localhost:8000")
 
     def on_start(self):
         if not API_KEY or not SIGNING_SECRET:
-            raise Exception("PAYTON_API_KEY ва PAYTON_SIGNING_SECRET лозиманд!")
+            raise Exception("PAYTON_API_KEY и PAYTON_SIGNING_SECRET обязательны!")
 
     @task(5)
     def credit_apply_daily(self):
+        """DailyPay - 200-2000 TJS"""
+        # Уникальный паспорт для каждого запроса
+        passport_num = str(uuid.uuid4().int)[:8]
+        
         payload = {
             "passport_series": "AA",
-            "passport_number": f"{1000000 + self.environment.runner.user_count:08d}",
+            "passport_number": passport_num,
             "date_of_birth": "2000-01-15",
             "amount": 1000,
             "product_type": "DailyPay",
             "face_id_data": "TEST_FACE_ID_LIVE_001",
-            "user_phone": f"+99290{1000000 + self.environment.runner.user_count:07d}",
+            "user_phone": f"+99290{passport_num[:7]}",
             "self_iban": "TJ5900010000000000000001",
             "request_id": f"load-{uuid.uuid4().hex[:12]}"
         }
+        
         body = json.dumps(payload)
         headers = {
             "X-API-KEY": API_KEY,
             "X-Signature": sign_request(body),
             "Content-Type": "application/json"
         }
+        
         with self.client.post(
             "/api/v1/credit/apply",
             data=body,
@@ -61,24 +68,29 @@ class CreditUser(HttpUser):
 
     @task(3)
     def credit_apply_rent(self):
+        """RentPay - 500-5000 TJS"""
+        passport_num = str(uuid.uuid4().int)[:8]
+        
         payload = {
             "passport_series": "BB",
-            "passport_number": f"{2000000 + self.environment.runner.user_count:08d}",
+            "passport_number": passport_num,
             "date_of_birth": "1995-05-20",
             "amount": 3000,
             "product_type": "RentPay",
             "face_id_data": "TEST_FACE_ID_LIVE_002",
-            "user_phone": f"+99290{2000000 + self.environment.runner.user_count:07d}",
+            "user_phone": f"+99290{passport_num[:7]}",
             "landlord_iban": "TJ0500030000000000000003",
             "landlord_name": "Test Landlord",
             "request_id": f"load-{uuid.uuid4().hex[:12]}"
         }
+        
         body = json.dumps(payload)
         headers = {
             "X-API-KEY": API_KEY,
             "X-Signature": sign_request(body),
             "Content-Type": "application/json"
         }
+        
         with self.client.post(
             "/api/v1/credit/apply",
             data=body,
@@ -93,24 +105,29 @@ class CreditUser(HttpUser):
 
     @task(2)
     def credit_apply_student(self):
+        """StudentPay - 3000-12000 TJS"""
+        passport_num = str(uuid.uuid4().int)[:8]
+        
         payload = {
             "passport_series": "CC",
-            "passport_number": f"{3000000 + self.environment.runner.user_count:08d}",
+            "passport_number": passport_num,
             "date_of_birth": "2002-09-01",
             "amount": 5000,
             "product_type": "StudentPay",
             "face_id_data": "TEST_FACE_ID_LIVE_003",
-            "user_phone": f"+99290{3000000 + self.environment.runner.user_count:07d}",
+            "user_phone": f"+99290{passport_num[:7]}",
             "university_iban": "TJ3200020000000000000002",
             "university_name": "Test University",
             "request_id": f"load-{uuid.uuid4().hex[:12]}"
         }
+        
         body = json.dumps(payload)
         headers = {
             "X-API-KEY": API_KEY,
             "X-Signature": sign_request(body),
             "Content-Type": "application/json"
         }
+        
         with self.client.post(
             "/api/v1/credit/apply",
             data=body,
@@ -125,6 +142,7 @@ class CreditUser(HttpUser):
 
     @task(1)
     def health_check(self):
+        """Health check endpoint"""
         with self.client.get(
             "/api/v1/system/health",
             catch_response=True
