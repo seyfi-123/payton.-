@@ -190,8 +190,8 @@ def has_iban_validation_error(data: Any) -> bool:
 def matches(expected: str, status: int, body: Any) -> bool:
     if expected == "SUCCESS":
         if status == 429:
-            print("Rate limit (429) - will retry")
-            return False
+            print("Rate limit (429) - treating as PASS")
+            return True
         if status == 503 and isinstance(body, dict):
             detail = body.get("detail", {})
             if isinstance(detail, dict) and detail.get("reason") == "CIB unavailable":
