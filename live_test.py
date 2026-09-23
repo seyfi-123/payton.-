@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Payton + MockJet live E2E."""
+"""Payton + MockJet live E2E - Rate limit compatible."""
 
 from __future__ import annotations
 
@@ -227,6 +227,10 @@ def has_iban_validation_error(data: Any) -> bool:
 
 def matches(expected: str, status: int, body: Any) -> bool:
     if expected == "SUCCESS":
+        # Rate limit (429) - кутиш керак
+        if status == 429:
+            return False
+        # CIB unavailable - MockJet issue
         if status == 503 and isinstance(body, dict):
             detail = body.get("detail", {})
             if isinstance(detail, dict) and detail.get("reason") == "CIB unavailable":
@@ -436,6 +440,11 @@ def run_payton(case: PaytonCase) -> bool:
     else:
         failed += 1
         print(f"FAIL {case.label} (expected={case.expected})")
+    
+    # Rate limit учун кутиш (12 секунд = 5 дархост/соат)
+    # Rate limit: 5 requests per hour per passport
+    time.sleep(12)
+    
     return ok
 
 
@@ -495,6 +504,10 @@ def main() -> int:
     print(f"SELF_IBAN:       {mask_iban(SELF_IBAN)}")
     print(f"UNIVERSITY_IBAN: {mask_iban(UNIVERSITY_IBAN)}")
     print(f"LANDLORD_IBAN:   {mask_iban(LANDLORD_IBAN)}")
+    print("=" * 72)
+    print()
+    print("  Rate limit protection: 12 second delay between tests")
+    print("⏱️  Estimated runtime: ~15 minutes")
     print("=" * 72)
 
     require_iso_iban("SELF_IBAN", SELF_IBAN)
@@ -557,7 +570,7 @@ def main() -> int:
         print(f"FAIL {primary_fail} PRIMARY TEST(S) FAILED")
         return 1
 
-    print("ALL 74 PRIMARY TESTS PASSED")
+    print("ALL 74 PRIMARY TESTS PASSED ")
     return 0
 
 
