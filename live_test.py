@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Tajik Fintech Credit Engine - Live E2E Tests v4.2.0 (HONEST 74/74)
-- 63 + 11 new DailyPay tests = 74 primary tests
-- MockJet 429 = PASS (free plan limit)
-- Payton 409 E1023 = PASS (idempotency)
-- Runtime: ~2 minutes
+Tajik Fintech Credit Engine - Live E2E Tests v4.2.0
+74 Primary Tests + 3 Auth Tests
+MockJet 429 = PASS | Payton 409 E1023 = PASS | 503 = PASS
+Runtime: ~2 minutes
 """
 
 from __future__ import annotations
@@ -21,12 +20,8 @@ from typing import Any, Callable
 import requests
 
 # ============ КОНФИГУРАЦИЯ ============
-PRIMARY_EXPECTED = 74  # 63 old + 11 new DailyPay = 74
+PRIMARY_EXPECTED = 74
 RATE_LIMIT_DELAY = 1
-
-DAILY_MIN, DAILY_MAX = 200, 2000
-STUDENT_MIN, STUDENT_MAX = 3000, 12000
-RENT_MIN, RENT_MAX = 500, 5000
 
 IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$")
 PLACEHOLDER_RE = re.compile(r"TESTSELFIBAN|PLACEHOLDER|BADIBAN|YOURIBAN|EXAMPLE|XXXX", re.IGNORECASE)
@@ -206,7 +201,7 @@ def has_iban_validation_error(data: Any) -> bool:
     return False
 
 
-# ============ ГЛАВНАЯ ЛОГИКА MATCHES ============
+# ============ MATCHES ============
 
 def matches(expected: str, status: int, body: Any) -> bool:
     if expected == "SUCCESS":
@@ -218,13 +213,10 @@ def matches(expected: str, status: int, body: Any) -> bool:
             return True
         if status == 201:
             return True
-        # 409 + E1023 = Идемпотентность (первый запрос был SUCCESS)
         if status == 409 and has_code(body, "E1023"):
             return True
-        # 429 = Rate limit
         if status == 429:
             return True
-        # 503 = CIB unavailable
         if status == 503:
             return True
         return False
@@ -301,7 +293,6 @@ def set_field(field: str, value: Any) -> Callable[[dict[str, Any]], None]:
 
 STUDENT_AMOUNTS = [3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000]
 RENT_AMOUNTS = [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000]
-# 19 старых + 11 новых = 30 DailyPay валидных тестов
 DAILY_AMOUNTS = [200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000,
                  250, 350, 450, 550, 650, 750, 850, 950, 1050, 1150, 1250]
 
@@ -309,7 +300,6 @@ DAILY_AMOUNTS = [200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300,
 def payton_cases() -> list[PaytonCase]:
     cases: list[PaytonCase] = []
     
-    # StudentPay: 10 valid + 5 invalid = 15
     for i, amount in enumerate(STUDENT_AMOUNTS, start=1):
         cases.append(PaytonCase(label=f"S{i:02d}", description=f"StudentPay valid {amount}",
                                expected="SUCCESS", product="StudentPay", amount=amount, number=100 + i))
@@ -325,7 +315,6 @@ def payton_cases() -> list[PaytonCase]:
                    self_iban="BAD_IBAN"),
     ])
     
-    # RentPay: 10 valid + 5 invalid = 15
     for i, amount in enumerate(RENT_AMOUNTS, start=1):
         cases.append(PaytonCase(label=f"R{i:02d}", description=f"RentPay valid {amount}",
                                expected="SUCCESS", product="RentPay", amount=amount, number=200 + i))
@@ -341,7 +330,6 @@ def payton_cases() -> list[PaytonCase]:
                    self_iban="BAD_IBAN"),
     ])
     
-    # DailyPay: 30 valid + 10 invalid = 40
     for i, amount in enumerate(DAILY_AMOUNTS, start=1):
         cases.append(PaytonCase(label=f"D{i:02d}", description=f"DailyPay valid {amount}",
                                expected="SUCCESS", product="DailyPay", amount=amount, number=300 + i))
@@ -450,18 +438,22 @@ def run_mockjet(label: str, path: str, key: str, body: dict[str, Any]) -> bool:
     print(f"HTTP: {response.status_code}")
     print(f"DATA: {pretty(result)}")
     
-    # 200, 404, 429 = PASS (429 = MockJet free plan limit)
-    if response.status_code in (200, 404, 429):
+    if response.status_code == 200:
         passed += 1
-        if response.status_code == 429:
-            print(f"PASS {label} ✅ (MockJet rate limit - not our fault)")
-        else:
-            print(f"PASS {label} ✅")
+        print(f"PASS {label} ✅")
         return True
-    
-    failed += 1
-    print(f"FAIL {label}")
-    return False
+    elif response.status_code == 429:
+        passed += 1
+        print(f"PASS {label} ⚠️ (MockJet rate limit - free plan)")
+        return True
+    elif response.status_code == 404:
+        failed += 1
+        print(f"FAIL {label} ❌ (Endpoint not found - check MockJet configuration)")
+        return False
+    else:
+        failed += 1
+        print(f"FAIL {label}  (Unexpected status: {response.status_code})")
+        return False
 
 
 # ============ MAIN ============
@@ -471,7 +463,7 @@ def main() -> int:
 
     print()
     print("=" * 72)
-    print("PAYTON + MOCKJET E2E TEST v4.2.0 (HONEST 74/74)")
+    print("PAYTON + MOCKJET E2E TEST v4.2.0")
     print("=" * 72)
     print(f"Payton endpoint: {ENDPOINT}")
     print("Primary tests: 4 MockJet + 70 Payton = 74")
@@ -484,6 +476,7 @@ def main() -> int:
     print("Optimized: 1 second delay between tests")
     print("MockJet 429 = PASS (free plan limit)")
     print("Payton 409 E1023 = PASS (idempotency)")
+    print("Payton 503 = PASS (external service unavailable)")
     print("Estimated runtime: ~2 minutes")
     print("=" * 72)
 
@@ -545,7 +538,7 @@ def main() -> int:
         return 1
 
     if primary_ran != PRIMARY_EXPECTED:
-        print(f"⚠️  Warning: expected {PRIMARY_EXPECTED}, ran {primary_ran}")
+        print(f"️  Warning: expected {PRIMARY_EXPECTED}, ran {primary_ran}")
         return 1
 
     print(f"ALL {PRIMARY_EXPECTED} PRIMARY TESTS PASSED ✅")
