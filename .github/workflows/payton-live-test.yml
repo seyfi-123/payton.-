@@ -11,14 +11,14 @@ jobs:
       contents: read
 
     env:
-      PAYTON_BASE_URL: https://payton-production.up.railway.app
-      PAYTON_API_KEY: ${{ secrets.API_KEY }}
-      PAYTON_SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
+      PAYTON_BASE_URL: ${{ secrets.PAYTON_BASE_URL || 'https://payton-production.up.railway.app' }}
+      PAYTON_API_KEY: ${{ secrets.PAYTON_API_KEY }}
+      PAYTON_SIGNING_SECRET: ${{ secrets.PAYTON_SIGNING_SECRET }}
       PAYTON_SELF_IBAN: ${{ secrets.SELF_IBAN }}
-      PAYTON_GUARANTOR_PHONE: ${{ secrets.GUARANTOR_PHONE }}
+      PAYTON_GUARANTOR_PHONE: ${{ secrets.TEST_USER_PHONE }}
       PAYTON_UNIVERSITY_IBAN: ${{ secrets.UNIVERSITY_IBAN }}
       PAYTON_LANDLORD_IBAN: ${{ secrets.LANDLORD_IBAN }}
-      MOCKJET_BASE_URL: https://mockjet.io/m/5b1fe03c-9ffd-43e6-848c-7fd3a1b711a9
+      MOCKJET_BASE_URL: ${{ secrets.MOCKJET_BASE_URL || 'https://mockjet.io/m/5b1fe03c-9ffd-43e6-848c-7fd3a1b711a9' }}
       MOCKJET_CIB_KEY: ${{ secrets.MOCKJET_CIB_KEY }}
       MOCKJET_ABS_KEY: ${{ secrets.MOCKJET_ABS_KEY }}
 
@@ -47,8 +47,8 @@ jobs:
               echo "${name} length: ${#value}"
             fi
           }
-          check API_KEY "$PAYTON_API_KEY"
-          check SIGNING_SECRET "$PAYTON_SIGNING_SECRET"
+          check PAYTON_API_KEY "$PAYTON_API_KEY"
+          check PAYTON_SIGNING_SECRET "$PAYTON_SIGNING_SECRET"
           check SELF_IBAN "$PAYTON_SELF_IBAN"
           check UNIVERSITY_IBAN "$PAYTON_UNIVERSITY_IBAN"
           check LANDLORD_IBAN "$PAYTON_LANDLORD_IBAN"
@@ -119,6 +119,10 @@ jobs:
           ran = 0
 
 
+          # ---------------------------------------------------------------------------
+          # IBAN
+          # ---------------------------------------------------------------------------
+
           def iban_mod97(iban: str) -> int:
               body = iban[4:] + iban[:4]
               digits: list[str] = []
@@ -134,7 +138,7 @@ jobs:
           def mask_iban(iban: str) -> str:
               if len(iban) < 8:
                   return "(short)"
-              return f"{iban[:4]}...{iban[-4:]} (len={len(iban)})"
+              return f"{iban[:4]}…{iban[-4:]} (len={len(iban)})"
 
 
           def require_iso_iban(name: str, value: str) -> None:
@@ -146,7 +150,7 @@ jobs:
               if not IBAN_RE.fullmatch(value):
                   raise SystemExit(
                       f"{name} is not ISO IBAN format "
-                      f"(need CC + 2 check digits + BBAN, 15-34 chars). Got {mask_iban(value)}"
+                      f"(need CC + 2 check digits + BBAN, 15–34 chars). Got {mask_iban(value)}"
                   )
               rem = iban_mod97(value)
               if rem != 1:
@@ -155,6 +159,10 @@ jobs:
                       f"Payton returns E1006 for this value. {mask_iban(value)}"
                   )
 
+
+          # ---------------------------------------------------------------------------
+          # HTTP helpers
+          # ---------------------------------------------------------------------------
 
           def pretty(data: Any) -> str:
               try:
@@ -168,6 +176,7 @@ jobs:
 
 
           def phone(number: int) -> str:
+              # +992 + 9 digits, OpenAPI user_phone maxLength=15
               return f"+99290{number:07d}"
 
 
@@ -295,8 +304,9 @@ jobs:
               return False
 
 
-          from dataclasses import dataclass
-
+          # ---------------------------------------------------------------------------
+          # Cases
+          # ---------------------------------------------------------------------------
 
           @dataclass(frozen=True)
           class PaytonCase:
@@ -377,6 +387,7 @@ jobs:
               cases.extend([
                   PaytonCase("R16", "RentPay invalid product", "VALIDATION", "RentPay", 1000, 216,
                              tweak=set_field("product_type", "RENT_PAY")),
+                  # landlord_iban is optional in OpenAPI — business layer may return 400 or 422
                   PaytonCase("R17", "RentPay missing landlord_iban", "REJECTED", "RentPay", 1000, 217,
                              tweak=drop("landlord_iban")),
                   PaytonCase("R18", "RentPay empty landlord_iban", "REJECTED", "RentPay", 1000, 218,
@@ -530,7 +541,7 @@ jobs:
               print("=" * 72)
               print(f"Payton endpoint: {ENDPOINT}")
               print("Primary tests: 4 MockJet + 70 Payton = 74")
-              print("Payton: S01-S20 / R01-R20 / D01-D30")
+              print("Payton: S01–S20 / R01–R20 / D01–D30")
               print(f"SELF_IBAN:       {mask_iban(SELF_IBAN)}")
               print(f"UNIVERSITY_IBAN: {mask_iban(UNIVERSITY_IBAN)}")
               print(f"LANDLORD_IBAN:   {mask_iban(LANDLORD_IBAN)}")
